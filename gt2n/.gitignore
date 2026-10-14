@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
 # QA / regression scratch outputs
-libs.qa/**/run/
+run/
 libs.qa/**/*.lyrdb
 libs.qa/**/*.lvsdb
