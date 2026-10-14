@@ -1,0 +1,10 @@
+# Known DRC findings in the upstream GT2N standard-cell layouts.
+# Format: <rule glob> <cell glob>   # reason
+#
+# mux2_x1 (double height): the V0 at y=0.1595 um starts on the lower edge of
+# its M1 strap, so the 4 nm vertical M1 enclosure of V0.M1.1 is not met.
+V0.M1.1  gt2_6t_mux2_x1_*
+#
+# decapcc in the 13 nm-sheet libraries: the gate vias (VG) sit 5 nm above/below
+# the narrower active (ACT), below the 6 nm minimum of VG.ACT.1.
+VG.ACT.1 gt2_6t_decapcc_w13_*
