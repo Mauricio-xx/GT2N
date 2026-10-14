@@ -88,8 +88,8 @@ export TAP_CELL_NAME ?= gt2_6t_tapbspdn_$(GT2N_FLAVOR)
 export PDN_TCL ?= $(PLATFORM_DIR)/pdn_bspdn_proxy.tcl
 else
 export TAP_CELL_NAME ?= gt2_6t_tapfspdn_$(GT2N_FLAVOR)
-export PDN_TCL ?= $(PLATFORM_DIR)/pdn_fspdn.tcl
-export POST_PDN_TCL ?= $(PLATFORM_DIR)/post_pdn_tap_to_m3.tcl
+export PDN_TCL ?= $(GT2N_PDK_DIR)/libs.tech/librelane/gt2n_pdn_fspdn.tcl
+export POST_PDN_TCL ?= $(GT2N_PDK_DIR)/libs.tech/librelane/gt2n_tap_to_m3.tcl
 export PRE_IO_PLACEMENT_TCL ?= $(PLATFORM_DIR)/pre_io_avoid_pdn_stripes.tcl
 endif
 

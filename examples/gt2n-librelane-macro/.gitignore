@@ -1,0 +1,5 @@
+librelane/runs/
+final/
+cocotb/sim_build/
+cocotb/results.xml
+__pycache__/

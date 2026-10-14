@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# LibreLane (Classic flow) configuration of the GT2N macro example.
+# Run from the example directory with `make librelane` (see ../README.md).
+
+meta:
+  version: 3
+  flow: Classic
+  substituting_steps:
+    # The GT2N Magic technology is layout-level only (no nanosheet device
+    # extraction), so the Magic/Netgen LVS path is disabled. Transistor-level
+    # LVS of GT2N layouts uses the KLayout deck of the PDK:
+    #   gt2n/libs.tech/klayout/tech/lvs/gt2n.lylvs
+    Magic.SpiceExtraction: null
+    Checker.IllegalOverlap: null
+    Netgen.LVS: null
+    Checker.LVS: null
+
+DESIGN_NAME: gt2n_demo
+VERILOG_FILES:
+- dir::../src/gt2n_demo.v
+
+# The standard-cell library (one per nanosheet width w13/w31 and threshold
+# voltage elvt/ulvt/lvt/svt/hvt) is chosen on the command line with
+# `--scl` (Makefile: SCL=gt2_6t_w31_svt, the PDK default).
+
+# Clock (ns)
+CLOCK_PORT: clk
+CLOCK_PERIOD: 1.0
+
+# The GT2N Liberty files use ps/ohm; this SDC switches the command units to
+# the ns/kOhm values LibreLane passes before applying its base constraints.
+PNR_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
+SIGNOFF_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
+
+# Floorplan (um). The M2/M3 power stripes use a 6 um pitch, so keep the core
+# at least a few pitches wide.
+FP_SIZING: absolute
+DIE_AREA: [0, 0, 30, 30]
+PL_TARGET_DENSITY_PCT: 50
+
+# Power: GT2N frontside PDN (M2..M9 mesh) plus the tap-cell to M3 hookup of
+# the buried power rails.
+VDD_NETS: [VDD]
+GND_NETS: [VSS]
+PDN_CFG: pdk_dir::libs.tech/librelane/gt2n_pdn_cfg.tcl

@@ -13,7 +13,7 @@
 #
 # Generalised from the GT2N AES reference run: instead of fixed stripe
 # offsets, the M2/M3 stripe positions are read back from the PDN that
-# pdn_fspdn.tcl (or any user PDN with M2 and M3 stripes) has just built.
+# gt2n_pdn_fspdn.tcl (or any user PDN with M2 and M3 stripes) has just built.
 #
 # Rules followed:
 #   * no new M1 is drawn; only the V1 landing on the existing tap pin;
