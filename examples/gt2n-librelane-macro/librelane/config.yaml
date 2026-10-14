@@ -37,7 +37,10 @@ SIGNOFF_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 # at least a few pitches wide.
 FP_SIZING: absolute
 DIE_AREA: [0, 0, 30, 30]
-PL_TARGET_DENSITY_PCT: 50
+# Pin access is tight: the cell M1 pins sit on a 42 nm grid and the M1 tracks
+# on 28 nm, so every other pin is half a track off-grid. At 50 % placement
+# density the detailed router of this design stops with a few violations.
+PL_TARGET_DENSITY_PCT: 35
 
 # I/O pins exactly one track wide: GT2N metals are RECTONLY, and the default
 # 2x-wide square pins form T-shaped (non-rectangular) unions with the

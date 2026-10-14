@@ -60,6 +60,9 @@ set ::env(KLAYOUT_DRC_RUNSET) "$gt2n_tech/klayout/tech/drc/gt2n.lydrc"
 set ::env(KLAYOUT_DRC_DEFINES) [dict create drc_mode route]
 set ::env(KLAYOUT_LVS_SCRIPT) "$gt2n_tech/klayout/tech/lvs/gt2n.lylvs"
 set ::env(KLAYOUT_LVS_OPTIONS) [dict create lvs_mode abstract]
+# The place-and-route boundary is not a mask layer: KLayout writes the die
+# area there, Magic only the cell boundaries.
+set ::env(KLAYOUT_XOR_IGNORE_LAYERS) "235/250"
 
 # Floorplan
 set ::env(FP_TRACKS_INFO) "$gt2n_tech/librelane/tracks.info"

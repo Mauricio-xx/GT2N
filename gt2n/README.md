@@ -40,7 +40,7 @@ gt2n/
 | --- | --- | --- |
 | Yosys | Liberty, Verilog models | Verilog models formally equivalent to Liberty (all 680 logic cells) |
 | Icarus / Verilator / cocotb | `libs.ref/*/verilog` | flip-flop testbench, RTL/GL simulation of the example macro |
-| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; full P&R run pending |
+| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; example macro runs RTL to GDS with 0 DRC (KLayout, Magic), 0 XOR, 0 antenna, timing met |
 | OpenROAD | via LibreLane (PDN, tap hookup, tracks, RC) | see LibreLane |
 | KLayout | `libs.tech/klayout/tech` | DRC clean on all libraries (2 documented upstream waivers); transistor-level LVS matches all 720 cells |
 | Magic | `libs.tech/magic` | GDS round trip exact for all libraries; no device extraction |
@@ -66,7 +66,9 @@ gt2n/
   front+backside stack.
 - **Units.** Liberty files use ps / ohm / pF. LibreLane designs should use
   `libs.tech/librelane/gt2n_base.sdc`, which switches the SDC command units to
-  ns / kOhm.
+  ns / kOhm. The `libs.ref` GDS use a 0.1 nm database unit; the legacy files
+  use 0.5 nm, which LibreLane's Magic stream-out rejects. The geometry is
+  identical (`scripts/sync_libs_ref.py` rescales the coordinates).
 - **Flavours.** One library per nanosheet width (13 nm, 31 nm) and threshold
   voltage (ELVT < ULVT < LVT < SVT < HVT). Cell names carry the flavour
   suffix, e.g. `gt2_6t_nand2_x1_w31_svt`.
@@ -82,6 +84,10 @@ gt2n/
   `report`, `target_netlist`, same pass/fail messages).
 - KLayout DRC waivers (`libs.qa/stdcells/drc_waivers.txt`): `mux2_x1` V0.M1.1
   and the 13 nm `decapcc` VG.ACT.1 are findings in the upstream cell layouts.
+- LibreLane inserts decap cells after routing; the GT2N decaps carry M1
+  shapes, so the PDK configuration uses only the M1-free filler there.
+- OpenROAD PSM cannot trace the BPR supply pins, so LibreLane designs must
+  set `ERROR_ON_PDN_VIOLATIONS: false` (see `libs.tech/librelane/README.md`).
 - No I/O pad, SRAM or SPICE model support yet.
 
 ## Regenerating and testing

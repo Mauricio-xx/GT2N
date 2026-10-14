@@ -12,7 +12,7 @@ from this directory when run with `--pdk gt2n --pdk-root <repository>
 | `gt2_6t_<flavour>/{synth,pnr}_exclude.cells` | physical-only cells kept out of synthesis/resizing |
 | `tracks.info` | routing tracks of the frontside router view |
 | `gt2n_pdn_cfg.tcl` | `PDN_CFG`: GT2N PDN + tap-cell hookup (see below) |
-| `gt2n_pdn_fspdn.tcl` | frontside mesh (M2/M3 6 um, M4/M5 8 um, M6..M9 12 um, optional up to RDL) |
+| `gt2n_pdn_fspdn.tcl` | frontside mesh (M2/M3 6 um, M4/M5 8 um, M6..M9 12 um, optional up to RDL); M3..M6 stripes as wide as the via cuts (self-aligned via rules) |
 | `gt2n_tap_to_m3.tcl` | connects every `tapfspdn` M1 pin to the nearest same-net M3 stripe |
 | `gt2n_base.sdc` | default SDC: switches to ns/kOhm, then LibreLane's base SDC |
 | `openrcx/gt2n_rcx_patterns.rules` | OpenRCX extraction rules |
@@ -59,3 +59,15 @@ M2 jog with V1/V2 from each pin to the nearest same-net M3 stripe, extends
 that stripe along its track where pdngen trimmed it short of the jog (rows
 at the top and bottom of the core), and checks the grid with
 `check_power_grid`.
+
+## Other PDK-level choices
+
+- **Fill.** LibreLane's `OpenROAD.FillInsertion` places `DECAP_CELLS` and
+  `FILL_CELLS` after detailed routing. The GT2N decap cells
+  (`gt2_6t_decapcc_*`) contain M1 shapes that would land on routed M1 wires,
+  so both lists name the M1-free `gt2_6t_filler_*` cell. Decaps can still be
+  placed before routing by a design-specific step.
+- **XOR.** `KLAYOUT_XOR_IGNORE_LAYERS` skips the place-and-route boundary
+  (235/250): KLayout writes the die area there, Magic only the cell outlines.
+- **GDS units.** The `libs.ref` GDS use a 0.1 nm database unit (the legacy
+  files use 0.5 nm), the unit LibreLane's Magic stream-out requires.

@@ -28,14 +28,16 @@ set low_offset [gt2n_pdn_env GT2N_PDN_LOW_OFFSET 3.0]
 set top_layer  [gt2n_pdn_env GT2N_PDN_TOP_LAYER RDL]
 set extend     [gt2n_pdn_env GT2N_PDN_EXTEND_TO_BOUNDARY 1]
 
-# layer width pitch offset (um). Upper layers use conservative widths
+# layer width pitch offset (um). M3..M6 use exactly the via cut sizes: the
+# self-aligned via rules (V3.3..V5.4) require the V3/V4/V5 cut edges to
+# coincide with the metal edges. Upper layers use conservative widths
 # relative to the tech LEF minimums (M10/M11 0.056, M12/M13 0.36, RDL 1.6).
 set mesh [list \
   [list M2  0.012 $low_pitch $low_offset] \
   [list M3  0.014 $low_pitch $low_offset] \
-  [list M4  0.028 8.0  4.0] \
-  [list M5  0.028 8.0  4.0] \
-  [list M6  0.076 12.0 6.0] \
+  [list M4  0.021 8.0  4.0] \
+  [list M5  0.021 8.0  4.0] \
+  [list M6  0.038 12.0 6.0] \
   [list M7  0.076 12.0 6.0] \
   [list M8  0.076 12.0 6.0] \
   [list M9  0.076 12.0 6.0] \

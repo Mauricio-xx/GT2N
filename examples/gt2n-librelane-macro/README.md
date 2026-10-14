@@ -52,9 +52,25 @@ make sim-gl                        # gate-level simulation of final/nl
 
 ## Status
 
-- RTL and gate-level simulation (Yosys synthesis to `gt2_6t_w31_svt`, 179
-  cells, Icarus + cocotb) pass against the Python reference model.
+Results of `make librelane` (`gt2_6t_w31_svt`, 30 x 30 um die, 1 GHz clock):
+
+| Check | Result |
+| --- | --- |
+| Detailed routing (TritonRoute) | 0 violations |
+| KLayout DRC (`gt2n.lydrc`, route mode) | 0 errors |
+| Magic DRC | 0 errors |
+| Magic vs KLayout stream-out XOR | 0 differences |
+| Antenna | 0 violating nets |
+| Setup / hold (tt 0.7 V 25 C) | met (setup WNS +0.48 ns) |
+| Max slew / max cap | 0 violations |
+
+438 logic and clock cells (32 flip-flops) plus filler and tap cells; the
+whole flow runs in about three minutes.
+
+- RTL and gate-level simulation (Icarus + cocotb) pass against the Python
+  reference model.
 - The LibreLane configuration loads for all ten libraries
   (`gt2n/libs.qa/librelane/check_config.py`).
-- A complete LibreLane place-and-route run has not been executed yet in the
-  environment where this port was prepared.
+- OpenROAD PSM reports every standard cell as unconnected because the cell
+  supply pins are on BPR, which it cannot trace; `ERROR_ON_PDN_VIOLATIONS` is
+  off for that reason (see `config.yaml`).

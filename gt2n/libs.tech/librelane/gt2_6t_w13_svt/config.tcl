@@ -16,9 +16,11 @@ set ::env(SYNTH_TIELO_CELL) "gt2_6t_tielow_w13_svt/Y"
 # fF (the LibreLane base SDC converts it to pF).
 set ::env(OUTPUT_CAP_LOAD) 5
 
-# Fill / decap
+# Fill / decap. LibreLane inserts DECAP_CELLS together with the fill cells
+# after detailed routing; the GT2N decaps carry M1 shapes that would land on
+# routed M1, so only the M1-free filler is used there.
 set ::env(FILL_CELLS) "gt2_6t_filler_w13_svt"
-set ::env(DECAP_CELLS) "gt2_6t_decapcc_w13_svt"
+set ::env(DECAP_CELLS) "gt2_6t_filler_w13_svt"
 set ::env(CELL_PAD_EXCLUDE) "gt2_6t_filler_* gt2_6t_decapcc_* gt2_6t_tap*"
 set ::env(GPL_CELL_PADDING) 1
 set ::env(DPL_CELL_PADDING) 0
