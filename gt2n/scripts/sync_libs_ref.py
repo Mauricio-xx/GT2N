@@ -22,11 +22,16 @@ only write sub-nanometre GDS with 1 A units and, when it reads cell GDS
 without rescaling (as LibreLane does), requires the same units. The copies
 in libs.ref are therefore rewritten with a 1e-10 m database unit (all
 coordinates multiplied by 5); the geometry is unchanged.
+
+The cell LEF is copied unchanged except for the double-height cells
+(dffasync, mux2: vss-vdd-vss rails). Their legacy SYMMETRY X Y lets
+OpenROAD's detailed placer flip them into rows whose rails run vdd-vss-vdd,
+shorting the supplies through the buried power rails; SYMMETRY Y keeps them
+on rows with the matching rail order.
 """
 
 import argparse
-import filecmp
-import shutil
+import re
 import struct
 import sys
 
@@ -87,6 +92,28 @@ def rescale_gds(data, factor=GDS_SCALE):
     return bytes(out)
 
 
+def restrict_multirow_symmetry(text):
+    """Drop the X symmetry of cells taller than one row (see module doc)."""
+    heights = [float(h) for h in re.findall(r"^\s*SIZE\s+\S+\s+BY\s+(\S+)\s*;", text, re.M)]
+    row = min(heights)
+    out = []
+    for block in re.split(r"(?=^MACRO\s)", text, flags=re.M):
+        m = re.search(r"^\s*SIZE\s+\S+\s+BY\s+(\S+)\s*;", block, re.M)
+        if block.startswith("MACRO") and m and float(m.group(1)) > row * 1.5:
+            block = re.sub(r"^(\s*)SYMMETRY\s+X\s+Y\s*;", r"\1SYMMETRY Y ;", block, flags=re.M)
+        out.append(block)
+    return "".join(out)
+
+
+def libs_ref_content(src, dst):
+    """Content of a libs.ref file derived from its legacy source."""
+    if dst.suffix == ".gds":
+        return rescale_gds(src.read_bytes())
+    if dst.suffix == ".lef" and dst.stem == dst.parent.parent.name:
+        return restrict_multirow_symmetry(src.read_text()).encode()
+    return src.read_bytes()
+
+
 def file_map():
     """Return a list of (source, destination) pairs."""
     pairs = []
@@ -117,19 +144,13 @@ def main():
     for src, dst in file_map():
         if not src.is_file():
             sys.exit(f"error: missing source file {src.relative_to(REPO_DIR)}")
-        if dst.suffix == ".gds":
-            content = rescale_gds(src.read_bytes())
-            if dst.is_file() and dst.read_bytes() == content:
-                continue
-        elif dst.is_file() and filecmp.cmp(src, dst, shallow=False):
+        content = libs_ref_content(src, dst)
+        if dst.is_file() and dst.read_bytes() == content:
             continue
         stale.append(dst)
         if not args.check:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            if dst.suffix == ".gds":
-                dst.write_bytes(content)
-            else:
-                shutil.copyfile(src, dst)
+            dst.write_bytes(content)
             print(f"updated {dst.relative_to(REPO_DIR)}")
 
     if args.check:

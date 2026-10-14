@@ -58,7 +58,10 @@ ties the BPR rails to two M1 pins; after pdngen, `gt2n_tap_to_m3.tcl` adds an
 M2 jog with V1/V2 from each pin to the nearest same-net M3 stripe, extends
 that stripe along its track where pdngen trimmed it short of the jog (rows
 at the top and bottom of the core), and checks the grid with
-`check_power_grid`.
+`check_power_grid`. VDD jogs run left and VSS jogs right; where both must
+run the same way (taps near the core edge) they take different M2 tracks,
+and the script stops rather than draw overlapping jogs of different nets
+(DRC cannot see such a short; LVS does).
 
 ## Other PDK-level choices
 

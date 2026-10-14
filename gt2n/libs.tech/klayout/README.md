@@ -32,7 +32,16 @@ klayout -b -r tech/lvs/gt2n.lylvs -rd input=cell.gds -rd topcell=CELL \
 - `lvs_mode=transistor`: extracts nanosheet devices (`nmos_<vt>`,
   `pmos_<vt>`); bulk terminals are tied to the cell supplies (`vss`/`vdd`,
   override with `lvs_ground_net`/`lvs_power_net`), floating-gate dummy
-  devices are dropped.
+  devices are dropped. Works for single cells and for placed-and-routed
+  blocks (see `make lvs` in `examples/gt2n-librelane-macro`):
+  - same-named supply labels are joined only inside the standard cells
+    (`lvs_implicit_cells`, default `gt2_6t_[^f]*`), so a supply open at
+    block level is reported;
+  - filler instances (`lvs_flatten_cells`, default `gt2_6t_filler*`) are
+    merged into the top cell before extraction; the schematic is expected
+    without fillers (OpenROAD `write_cdl` without `-include_fillers`);
+  - standard cells whose CDL instantiates other cells (`dffasync`) are
+    flattened to devices on the schematic side, as their layouts are flat.
 - `lvs_mode=abstract` (default): standard cells are black boxes; compares the
   routed connectivity of a placed-and-routed block. Options for full-chip
   runs from OpenROAD-flow-scripts: `def_file`, `signal_only_lvs`.

@@ -1771,7 +1771,7 @@ END gt2_6t_decapcc_w31_lvt
 MACRO gt2_6t_dffasync_x1_w31_lvt
   CLASS CORE  ;
   ORIGIN 0 0 ;
-  SYMMETRY X Y ;
+  SYMMETRY Y ;
   SITE gt2_6t ;
   FOREIGN gt2_6t_dffasync_x1_w31_lvt 0 0 ;
   SIZE 0.63 BY 0.288 ;
@@ -1894,7 +1894,7 @@ END gt2_6t_dffasync_x1_w31_lvt
 MACRO gt2_6t_dffasync_x2_w31_lvt
   CLASS CORE  ;
   ORIGIN 0 0 ;
-  SYMMETRY X Y ;
+  SYMMETRY Y ;
   SITE gt2_6t ;
   FOREIGN gt2_6t_dffasync_x2_w31_lvt 0 0 ;
   SIZE 0.756 BY 0.288 ;
@@ -2031,7 +2031,7 @@ END gt2_6t_dffasync_x2_w31_lvt
 MACRO gt2_6t_dffasync_x4_w31_lvt
   CLASS CORE  ;
   ORIGIN 0 0 ;
-  SYMMETRY X Y ;
+  SYMMETRY Y ;
   SITE gt2_6t ;
   FOREIGN gt2_6t_dffasync_x4_w31_lvt 0 0 ;
   SIZE 0.798 BY 0.288 ;
@@ -2570,7 +2570,7 @@ END gt2_6t_inv_x8_w31_lvt
 MACRO gt2_6t_mux2_x1_w31_lvt
   CLASS CORE  ;
   ORIGIN 0 0 ;
-  SYMMETRY X Y ;
+  SYMMETRY Y ;
   SITE gt2_6t ;
   FOREIGN gt2_6t_mux2_x1_w31_lvt 0 0 ;
   SIZE 0.21 BY 0.288 ;

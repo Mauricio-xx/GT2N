@@ -40,9 +40,9 @@ gt2n/
 | --- | --- | --- |
 | Yosys | Liberty, Verilog models | Verilog models formally equivalent to Liberty (all 680 logic cells) |
 | Icarus / Verilator / cocotb | `libs.ref/*/verilog` | flip-flop testbench, RTL/GL simulation of the example macro |
-| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; example macro runs RTL to GDS with 0 DRC (KLayout, Magic), 0 XOR, 0 antenna, timing met |
+| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; example macro runs RTL to GDS with 0 DRC (KLayout, Magic), 0 XOR, 0 antenna, timing met, transistor-level LVS clean |
 | OpenROAD | via LibreLane (PDN, tap hookup, tracks, RC) | see LibreLane |
-| KLayout | `libs.tech/klayout/tech` | DRC clean on all libraries (2 documented upstream waivers); transistor-level LVS matches all 720 cells |
+| KLayout | `libs.tech/klayout/tech` | DRC clean on all libraries (2 documented upstream waivers); transistor-level LVS matches all 720 cells and the placed-and-routed example macro |
 | Magic | `libs.tech/magic` | GDS round trip exact for all libraries; no device extraction |
 | Netgen | `libs.tech/netgen` | nanosheet MOS permutation/property rules |
 | ngspice / Xyce | `libs.ref/*/spice` | netlists only; BSIM-CMG model cards not ported yet |
@@ -73,6 +73,10 @@ gt2n/
   voltage (ELVT < ULVT < LVT < SVT < HVT). Cell names carry the flavour
   suffix, e.g. `gt2_6t_nand2_x1_w31_svt`.
 - **Corners.** Only the typical corner (tt, 0.7 V, 25 C) is characterised.
+- **Double-height cells.** `dffasync_*` and `mux2_*` span two rows with
+  vss-vdd-vss rails. Their `libs.ref` LEF declares `SYMMETRY Y` (the legacy
+  LEF has `X Y`), which keeps OpenROAD's placer from flipping them onto rows
+  with the opposite rail order, a supply short through the BPR.
 
 ## Known limitations
 
@@ -81,7 +85,8 @@ gt2n/
   extraction, so LibreLane's Magic/Netgen LVS path is disabled.
 - LibreLane's `KLayout.LVS` step is currently enabled only for the IHP PDKs;
   the GT2N deck is compatible with its interface (`input`, `schematic`,
-  `report`, `target_netlist`, same pass/fail messages).
+  `report`, `target_netlist`, same pass/fail messages). The example runs it
+  with `make lvs`.
 - KLayout DRC waivers (`libs.qa/stdcells/drc_waivers.txt`): `mux2_x1` V0.M1.1
   and the 13 nm `decapcc` VG.ACT.1 are findings in the upstream cell layouts.
 - LibreLane inserts decap cells after routing; the GT2N decaps carry M1

@@ -141,7 +141,52 @@ end
 layout_path = $in_gds || $input || $gds
 raise "Missing -rd input=<layout.gds> (or -rd in_gds=<layout.gds>)" if !layout_path || layout_path.to_s.empty?
 top_cell_name = $topcell || $top_cell
-if top_cell_name && !top_cell_name.to_s.empty?
+
+# Placed-and-routed blocks in transistor mode: dissolve the filler instances
+# (no devices, tens of thousands per block) into the top cell before
+# extraction. Their BPR segments still close the supply rails, while the
+# hierarchical extractor and the netlist purge no longer handle one subcircuit
+# per filler. The schematic is expected without fillers (OpenROAD write_cdl
+# without -include_fillers). -rd lvs_flatten_cells= disables this.
+lvs_flatten_cells = ($lvs_flatten_cells || "gt2_6t_filler*").to_s
+flatten_layout = nil
+if ($lvs_mode || ENV["KLAYOUT_LVS_MODE"]).to_s.downcase == "transistor" && !lvs_flatten_cells.empty?
+  ly = RBA::Layout.new(true)
+  ly.read(layout_path)
+  top = (top_cell_name && !top_cell_name.to_s.empty?) ? ly.cell(top_cell_name) : ly.top_cell
+  raise "Top cell '#{top_cell_name}' not found in #{layout_path}" unless top
+  victims = []
+  top.each_inst { |inst| victims << inst if File.fnmatch(lvs_flatten_cells, inst.cell.name) }
+  unless victims.empty?
+    # Copy the shapes (not the labels) in one batch: Instance#flatten updates
+    # the layout after every call.
+    layers = ly.layer_indexes
+    shapes_of = {}
+    ly.start_changes
+    victims.each do |inst|
+      raise "GT2N LVS: arrayed '#{inst.cell.name}' instance not supported" if inst.is_regular_array?
+      content = shapes_of[inst.cell_index] ||= layers.flat_map do |li|
+        list = []
+        it = ly.begin_shapes(inst.cell_index, li)
+        until it.at_end?
+          list << [li, it.shape, it.trans] unless it.shape.is_text?
+          it.next
+        end
+        list
+      end
+      t = inst.cplx_trans
+      content.each { |li, shape, st| top.shapes(li).insert(shape, t * st) }
+      inst.delete
+    end
+    ly.end_changes
+    puts "INFO : GT2N flattened #{victims.size} '#{lvs_flatten_cells}' instance(s) into #{top.name}"
+    flatten_layout = top
+  end
+end
+
+if flatten_layout
+  source(flatten_layout)
+elsif top_cell_name && !top_cell_name.to_s.empty?
   source(layout_path, top_cell_name)
 else
   source(layout_path)
@@ -538,12 +583,19 @@ if lvs_mode == "transistor"
   # the 4-terminal CDL are tied to the cell supplies. Model that by making
   # the substrate/well partitions global nets named like the cell PG pins
   # and joining them with the labelled supply nets.
+  #
+  # The implicit join is limited to the standard cells with devices (some
+  # have two rails with the same PG label). Applied to a placed-and-routed
+  # top cell it would hide supply opens, and its run time grows with the
+  # square of a cell's instance count, which rules out the filler (no
+  # devices, tens of thousands of instances in a block).
   lvs_ground_net = ($lvs_ground_net || "vss").to_s
   lvs_power_net = ($lvs_power_net || "vdd").to_s
+  lvs_implicit_cells = ($lvs_implicit_cells || "gt2_6t_[^f]*").to_s
   connect_global(gPSUB, lvs_ground_net)
   connect_global(gNWELL, lvs_power_net)
-  connect_implicit(lvs_ground_net)
-  connect_implicit(lvs_power_net)
+  connect_implicit(lvs_implicit_cells, lvs_ground_net)
+  connect_implicit(lvs_implicit_cells, lvs_power_net)
 end
 
 # -----------------------------------------------------------------------------
@@ -944,6 +996,25 @@ end
 
 if lvs_mode == "transistor" && ($keep_floating_gate_devices || "0").to_s != "1"
   remove_floating_gate_devices(netlist)
+end
+
+# The standard-cell layouts are flat, but some cell CDLs instantiate other
+# cells (dffasync is built from nand3). In a block that also uses those cells
+# directly, align would keep the nested instances, so flatten the reference
+# standard cells down to devices here.
+if lvs_mode == "transistor"
+  flattened = 0
+  schematic.each_circuit do |circuit|
+    next unless File.fnmatch("gt2_6t_*", circuit.name, File::FNM_CASEFOLD)
+    loop do
+      subs = []
+      circuit.each_subcircuit { |sc| subs << sc }
+      break if subs.empty?
+      subs.each { |sc| circuit.flatten_subcircuit(sc) }
+      flattened += subs.size
+    end
+  end
+  puts "INFO : GT2N flattened #{flattened} nested standard-cell instance(s) in the schematic"
 end
 
 align

@@ -31,6 +31,7 @@ LibreLane at it (`--pdk gt2n --pdk-root <repo> --manual-pdk`).
 make librelane                     # Classic flow, final views copied to final/
 make librelane SCL=gt2_6t_w31_lvt  # another W/VT flavour
 make librelane-klayout             # view the last run
+make lvs                           # transistor-level LVS of final/ (KLayout)
 make sim                           # RTL simulation
 make sim-gl                        # gate-level simulation of final/nl
 ```
@@ -47,8 +48,10 @@ make sim-gl                        # gate-level simulation of final/nl
   is in ns, as usual).
 - **LVS.** The GT2N Magic technology is layout level (no nanosheet device
   extraction), so `Magic.SpiceExtraction`/`Netgen.LVS` are disabled in
-  `config.yaml`. Transistor-level LVS uses the KLayout deck of the PDK,
-  `gt2n/libs.tech/klayout/tech/lvs/gt2n.lylvs`.
+  `config.yaml`, and LibreLane's `KLayout.LVS` step only runs for the IHP
+  PDKs. `make lvs` writes the CDL of `final/odb` with OpenROAD
+  (`scripts/write_cdl.tcl`) and compares it with `final/gds` at transistor
+  level using the PDK deck `gt2n/libs.tech/klayout/tech/lvs/gt2n.lylvs`.
 
 ## Status
 
@@ -63,9 +66,10 @@ Results of `make librelane` (`gt2_6t_w31_svt`, 30 x 30 um die, 1 GHz clock):
 | Antenna | 0 violating nets |
 | Setup / hold (tt 0.7 V 25 C) | met (setup WNS +0.48 ns) |
 | Max slew / max cap | 0 violations |
+| Transistor-level LVS (`make lvs`) | netlists match |
 
-438 logic and clock cells (32 flip-flops) plus filler and tap cells; the
-whole flow runs in about three minutes.
+439 logic and clock cells (32 flip-flops) plus filler and tap cells; the
+flow runs in about three minutes, the LVS in about one and a half.
 
 - RTL and gate-level simulation (Icarus + cocotb) pass against the Python
   reference model.

@@ -22,7 +22,10 @@
 #     along its own track until it covers the jog;
 #   * the M2 jog is moved off any global M2 stripe (width + spacing apart);
 #   * VDD jogs run to the left, VSS jogs to the right (when such a stripe
-#     exists), so the jogs of the adjacent VDD/VSS tap pins move apart.
+#     exists), so the jogs of the adjacent VDD/VSS tap pins move apart;
+#   * a jog never shares an M2 track with an overlapping jog of another net
+#     (both jogs of a tap near the core edge run to the same side). When no
+#     track is clear the script stops instead of drawing a short.
 #
 # Environment knobs (all optional):
 #   GT2N_TAP_M3_NETS    supply nets to repair       (default "VDD VSS")
@@ -112,6 +115,21 @@ proc gt2n_tap_clear_of {y others keepout} {
   return 1
 }
 
+# Jogs drawn so far, as {net lx ux y}.
+set ::gt2n_tap_jogs {}
+
+# True when an M2 jog of net_name from lx to ux on track y keeps keepout
+# (track direction) and xgap (along the track) from every jog of another net.
+proc gt2n_tap_jog_clear {net_name lx ux y keepout xgap} {
+  foreach jog $::gt2n_tap_jogs {
+    lassign $jog onet olx oux oy
+    if {$onet eq $net_name} { continue }
+    if {abs($y - $oy) >= $keepout} { continue }
+    if {$lx - $xgap < $oux && $ux + $xgap > $olx} { return 0 }
+  }
+  return 1
+}
+
 proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
   set m3_extents [gt2n_tap_stripe_extents $net_name M3]
   set extended 0
@@ -141,6 +159,15 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
   set m2_half [expr {$m2_width / 2}]
   # A jog must stay one width + one spacing away from any global M2 stripe.
   set keepout [expr {$m2_width + [$m2 getSpacing]}]
+  # Along a track, the V1/V2 M2 pads of two jogs of different nets must keep
+  # the M2 spacing: centres at least two pad half-widths + spacing apart.
+  set pad_half $m2_half
+  foreach box [$v1 getBoxes] {
+    if {[$box getTechLayer] == $m2} {
+      set pad_half [expr {max($pad_half, ([$box xMax] - [$box xMin]) / 2)}]
+    }
+  }
+  set xgap [expr {2 * $pad_half + [$m2 getSpacing]}]
 
   set before [file join $::gt2n_tap_out_dir ${net_name}.before.rpt]
   file delete -force $before
@@ -164,30 +191,31 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
       set cx [expr {($x1 + $x2) / 2}]
       set cy [expr {($y1 + $y2) / 2}]
       set m3_x [gt2n_tap_pick_stripe $cx $m3_stripes $side]
+      set lx [expr {min($cx, $m3_x)}]
+      set ux [expr {max($cx, $m3_x)}]
+      if {$ux == $lx} { incr ux }
 
       # Start on the M2 track closest to the pin centre and walk along the pin
-      # until the jog is clear of every global M2 stripe.
+      # until the jog is clear of every global M2 stripe and of the jogs of
+      # the other nets.
       set n [expr {int(floor(double($cy - $m2_offset) / $m2_pitch + 0.5))}]
       set m2_y [expr {$m2_offset + $n * $m2_pitch}]
       set chosen ""
       foreach step {0 -1 1 -2 2 -3 3 -4 4} {
         set cand [expr {$m2_y + $step * $m2_pitch}]
         if {$cand - $m2_half < $y1 || $cand + $m2_half > $y2} { continue }
-        if {[gt2n_tap_clear_of $cand $m2_stripes $keepout]} {
+        if {[gt2n_tap_clear_of $cand $m2_stripes $keepout] &&
+            [gt2n_tap_jog_clear $net_name $lx $ux $cand $keepout $xgap]} {
           set chosen $cand
           break
         }
       }
       if {$chosen eq ""} {
-        puts "GT2N_TAP_M3: WARNING no clear M2 track for $net_name pin at ($cx, $cy)"
-        set chosen $m2_y
+        error "GT2N_TAP_M3: no free M2 track for the $net_name tap pin at ($cx, $cy)"
       } elseif {$chosen != $m2_y} {
         incr moved
       }
-
-      set lx [expr {min($cx, $m3_x)}]
-      set ux [expr {max($cx, $m3_x)}]
-      if {$ux == $lx} { incr ux }
+      lappend ::gt2n_tap_jogs [list $net_name $lx $ux $chosen]
       odb::dbSBox_create $swire $m2 $lx [expr {$chosen - $m2_half}] $ux [expr {$chosen + $m2_half}] "STRIPE"
       odb::dbSBox_create $swire $v1 $cx $chosen "STRIPE"
       odb::dbSBox_create $swire $v2 $m3_x $chosen "STRIPE"
@@ -217,7 +245,7 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
   set after [file join $::gt2n_tap_out_dir ${net_name}.after.rpt]
   file delete -force $after
   set status [catch {check_power_grid -net $net_name -error_file $after} msg]
-  puts "GT2N_TAP_M3: $net_name added=$added jogs (moved off M2 stripes: $moved, M3 stripes extended: $extended), after repair: $msg"
+  puts "GT2N_TAP_M3: $net_name added=$added jogs (moved to another M2 track: $moved, M3 stripes extended: $extended), after repair: $msg"
   if {$status != 0} {
     error "GT2N_TAP_M3: power grid of $net_name still disconnected, see $after"
   }

@@ -10,6 +10,11 @@ PDK_ROOT ?= $(realpath $(MAKEFILE_DIR)/../..)
 PDK ?= gt2n
 SCL ?= gt2_6t_w31_svt
 
+DESIGN = gt2n_demo
+SCL_DIR = $(PDK_ROOT)/$(PDK)/libs.ref/$(SCL)
+LVS_DECK = $(PDK_ROOT)/$(PDK)/libs.tech/klayout/tech/lvs/gt2n.lylvs
+LVS_DIR = $(MAKEFILE_DIR)/final/lvs
+
 LIBRELANE = librelane librelane/config.yaml --pdk $(PDK) --pdk-root $(PDK_ROOT) --manual-pdk --scl $(SCL)
 
 .DEFAULT_GOAL := help
@@ -35,6 +40,19 @@ librelane-openroad: ## Open the last run in the OpenROAD GUI
 librelane-klayout: ## Open the last run in KLayout
 	$(LIBRELANE) --last-run --flow OpenInKLayout
 .PHONY: librelane-klayout
+
+lvs: ## Transistor-level LVS of final/ with the GT2N KLayout deck
+	mkdir -p $(LVS_DIR)
+	ODB=$(MAKEFILE_DIR)/final/odb/$(DESIGN).odb CELL_CDL=$(SCL_DIR)/cdl/$(SCL).cdl OUT=$(LVS_DIR)/$(DESIGN).cdl \
+	  openroad -exit $(MAKEFILE_DIR)/scripts/write_cdl.tcl
+	cat $(LVS_DIR)/$(DESIGN).cdl $(SCL_DIR)/cdl/$(SCL).cdl > $(LVS_DIR)/$(DESIGN).schematic.cdl
+	klayout -b -r $(LVS_DECK) -rd lvs_mode=transistor \
+	  -rd input=$(MAKEFILE_DIR)/final/gds/$(DESIGN).gds -rd topcell=$(DESIGN) \
+	  -rd schematic=$(LVS_DIR)/$(DESIGN).schematic.cdl \
+	  -rd report=$(LVS_DIR)/$(DESIGN).lvsdb -rd target_netlist=$(LVS_DIR)/$(DESIGN).extracted.cir \
+	  | tee $(LVS_DIR)/$(DESIGN).lvs.log
+	grep -q "Congratulations! Netlists match" $(LVS_DIR)/$(DESIGN).lvs.log
+.PHONY: lvs
 
 sim: ## RTL simulation with cocotb + Icarus Verilog
 	cd cocotb; PDK_ROOT=$(PDK_ROOT) PDK=$(PDK) SCL=$(SCL) python3 gt2n_demo_tb.py
