@@ -17,6 +17,9 @@
 #
 # Rules followed:
 #   * no new M1 is drawn; only the V1 landing on the existing tap pin;
+#   * pdngen trims stripes back to their last via, so an M3 stripe may end
+#     before the rows at the top/bottom of the core: the stripe is extended
+#     along its own track until it covers the jog;
 #   * the M2 jog is moved off any global M2 stripe (width + spacing apart);
 #   * VDD jogs run to the left, VSS jogs to the right (when such a stripe
 #     exists), so the jogs of the adjacent VDD/VSS tap pins move apart.
@@ -59,6 +62,32 @@ proc gt2n_tap_stripe_centres {net_name layer_name axis} {
   return [lsort -integer -unique $centres]
 }
 
+# Vertical extent of the stripes of a net on a layer, keyed by centre x:
+# returns a dict  x -> {ylo yhi halfwidth}.
+proc gt2n_tap_stripe_extents {net_name layer_name} {
+  set block [ord::get_db_block]
+  set net [$block findNet $net_name]
+  set extents [dict create]
+  if {$net == "NULL"} { return $extents }
+  foreach swire [$net getSWires] {
+    foreach box [$swire getWires] {
+      if {[$box isVia]} { continue }
+      if {[[$box getTechLayer] getName] ne $layer_name} { continue }
+      set w [expr {[$box xMax] - [$box xMin]}]
+      set h [expr {[$box yMax] - [$box yMin]}]
+      if {$h <= $w} { continue }
+      set x [expr {([$box xMin] + [$box xMax]) / 2}]
+      if {[dict exists $extents $x]} {
+        lassign [dict get $extents $x] lo hi hw
+        dict set extents $x [list [expr {min($lo, [$box yMin])}] [expr {max($hi, [$box yMax])}] $hw]
+      } else {
+        dict set extents $x [list [$box yMin] [$box yMax] [expr {$w / 2}]]
+      }
+    }
+  }
+  return $extents
+}
+
 proc gt2n_tap_pick_stripe {cx stripes side} {
   set left {}
   set right {}
@@ -84,6 +113,8 @@ proc gt2n_tap_clear_of {y others keepout} {
 }
 
 proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
+  set m3_extents [gt2n_tap_stripe_extents $net_name M3]
+  set extended 0
   set block [ord::get_db_block]
   set tech [ord::get_db_tech]
   set net [$block findNet $net_name]
@@ -96,6 +127,7 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
   }
 
   set m2 [$tech findLayer M2]
+  set m3 [$tech findLayer M3]
   set v1 [$tech findVia V1_0]
   set v2 [$tech findVia V2_0]
   if {$m2 == "NULL" || $v1 == "NULL" || $v2 == "NULL"} {
@@ -159,6 +191,24 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
       odb::dbSBox_create $swire $m2 $lx [expr {$chosen - $m2_half}] $ux [expr {$chosen + $m2_half}] "STRIPE"
       odb::dbSBox_create $swire $v1 $cx $chosen "STRIPE"
       odb::dbSBox_create $swire $v2 $m3_x $chosen "STRIPE"
+      # Extend a trimmed M3 stripe along its track until it covers the via.
+      if {[dict exists $m3_extents $m3_x]} {
+        lassign [dict get $m3_extents $m3_x] lo hi hw
+        set need_lo [expr {$chosen - 2 * $m2_width}]
+        set need_hi [expr {$chosen + 2 * $m2_width}]
+        if {$need_lo < $lo || $need_hi > $hi} {
+          set new_lo [expr {min($lo, $need_lo)}]
+          set new_hi [expr {max($hi, $need_hi)}]
+          if {$new_lo < $lo} {
+            odb::dbSBox_create $swire $m3 [expr {$m3_x - $hw}] $new_lo [expr {$m3_x + $hw}] $lo "STRIPE"
+          }
+          if {$new_hi > $hi} {
+            odb::dbSBox_create $swire $m3 [expr {$m3_x - $hw}] $hi [expr {$m3_x + $hw}] $new_hi "STRIPE"
+          }
+          dict set m3_extents $m3_x [list $new_lo $new_hi $hw]
+          incr extended
+        }
+      }
       incr added
     }
     close $fh
@@ -167,7 +217,7 @@ proc gt2n_tap_repair_net {net_name side m3_stripes m2_stripes} {
   set after [file join $::gt2n_tap_out_dir ${net_name}.after.rpt]
   file delete -force $after
   set status [catch {check_power_grid -net $net_name -error_file $after} msg]
-  puts "GT2N_TAP_M3: $net_name added=$added jogs (moved off M2 stripes: $moved), after repair: $msg"
+  puts "GT2N_TAP_M3: $net_name added=$added jogs (moved off M2 stripes: $moved, M3 stripes extended: $extended), after repair: $msg"
   if {$status != 0} {
     error "GT2N_TAP_M3: power grid of $net_name still disconnected, see $after"
   }

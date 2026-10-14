@@ -756,9 +756,12 @@ module gt2_6t_dffasync_x1_w13_elvt (
 `ifdef GT2N_NO_UDP
   reg IQ_r;
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
-    if (!SETN) IQ_r <= 1'b1;
-    else if (!RESETN) IQ_r <= 1'b0;
-    else IQ_r <= D;
+    if (!SETN)
+      IQ_r <= 1'b1;
+    else if (!RESETN)
+      IQ_r <= 1'b0;
+    else
+      IQ_r <= D;
   end
   assign IQ = IQ_r;
 `else
@@ -798,9 +801,12 @@ module gt2_6t_dffasync_x2_w13_elvt (
 `ifdef GT2N_NO_UDP
   reg IQ_r;
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
-    if (!SETN) IQ_r <= 1'b1;
-    else if (!RESETN) IQ_r <= 1'b0;
-    else IQ_r <= D;
+    if (!SETN)
+      IQ_r <= 1'b1;
+    else if (!RESETN)
+      IQ_r <= 1'b0;
+    else
+      IQ_r <= D;
   end
   assign IQ = IQ_r;
 `else
@@ -840,9 +846,12 @@ module gt2_6t_dffasync_x4_w13_elvt (
 `ifdef GT2N_NO_UDP
   reg IQ_r;
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
-    if (!SETN) IQ_r <= 1'b1;
-    else if (!RESETN) IQ_r <= 1'b0;
-    else IQ_r <= D;
+    if (!SETN)
+      IQ_r <= 1'b1;
+    else if (!RESETN)
+      IQ_r <= 1'b0;
+    else
+      IQ_r <= D;
   end
   assign IQ = IQ_r;
 `else

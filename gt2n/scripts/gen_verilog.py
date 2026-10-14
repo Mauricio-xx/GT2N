@@ -150,12 +150,18 @@ def emit_cell(cell, ports):
             f"  always @(posedge {clk}" + (f" or negedge {rn}" if rn else "") +
             (f" or negedge {sn}" if sn else "") + ") begin",
         ]
+        # Keep each `if (...)` on its own line: LibreLane's model pre-processor
+        # drops lines shaped like `name (...) ...;` (cell instantiations).
         if sn:
-            body.append(f"    if (!{sn}) {iq}_r <= 1'b1;")
-            body.append(f"    else if (!{rn}) {iq}_r <= 1'b0;" if rn else "")
+            body += [f"    if (!{sn})", f"      {iq}_r <= 1'b1;"]
+            if rn:
+                body += [f"    else if (!{rn})", f"      {iq}_r <= 1'b0;"]
         elif rn:
-            body.append(f"    if (!{rn}) {iq}_r <= 1'b0;")
-        body.append(f"    else {iq}_r <= {d};" if (rn or sn) else f"    {iq}_r <= {d};")
+            body += [f"    if (!{rn})", f"      {iq}_r <= 1'b0;"]
+        if rn or sn:
+            body += ["    else", f"      {iq}_r <= {d};"]
+        else:
+            body.append(f"    {iq}_r <= {d};")
         body += [
             "  end",
             f"  assign {iq} = {iq}_r;",

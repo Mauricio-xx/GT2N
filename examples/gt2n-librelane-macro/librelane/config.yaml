@@ -39,8 +39,20 @@ FP_SIZING: absolute
 DIE_AREA: [0, 0, 30, 30]
 PL_TARGET_DENSITY_PCT: 50
 
+# I/O pins exactly one track wide: GT2N metals are RECTONLY, and the default
+# 2x-wide square pins form T-shaped (non-rectangular) unions with the
+# router's 1x-wide access wires.
+IO_PIN_V_THICKNESS_MULT: 1
+IO_PIN_H_THICKNESS_MULT: 1
+
 # Power: GT2N frontside PDN (M2..M9 mesh) plus the tap-cell to M3 hookup of
 # the buried power rails.
 VDD_NETS: [VDD]
 GND_NETS: [VSS]
 PDN_CFG: pdk_dir::libs.tech/librelane/gt2n_pdn_cfg.tcl
+
+# The standard-cell supply pins are on BPR, a MASTERSLICE layer in the
+# frontside router view, so OpenROAD PSM cannot trace them and reports every
+# cell as unconnected. Their connection through the rails and the tap cells
+# is checked by LVS instead.
+ERROR_ON_PDN_VIOLATIONS: false

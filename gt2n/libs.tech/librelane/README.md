@@ -36,6 +36,13 @@ PNR_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 SIGNOFF_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 VDD_NETS: [VDD]
 GND_NETS: [VSS]
+# GT2N metals are RECTONLY: 2x-wide square I/O pins plus 1x-wide access
+# wires are non-rectangular, so keep the pins one track wide.
+IO_PIN_V_THICKNESS_MULT: 1
+IO_PIN_H_THICKNESS_MULT: 1
+# Cell supply pins sit on BPR (MASTERSLICE in the router view): OpenROAD PSM
+# cannot trace them and flags every cell. LVS checks those connections.
+ERROR_ON_PDN_VIOLATIONS: false
 ```
 
 Choose the library with `--scl gt2_6t_<w13|w31>_<elvt|ulvt|lvt|svt|hvt>`
@@ -48,5 +55,7 @@ The standard-cell supply rails are buried power rails (BPR). In the
 frontside router view (`gt2_fspdn_tech.lef`) BPR is a MASTERSLICE layer, so
 neither the router nor pdngen followpins can use it. Every `tapfspdn` cell
 ties the BPR rails to two M1 pins; after pdngen, `gt2n_tap_to_m3.tcl` adds an
-M2 jog with V1/V2 from each pin to the nearest same-net M3 stripe and checks
-the grid with `check_power_grid`.
+M2 jog with V1/V2 from each pin to the nearest same-net M3 stripe, extends
+that stripe along its track where pdngen trimmed it short of the jog (rows
+at the top and bottom of the core), and checks the grid with
+`check_power_grid`.
