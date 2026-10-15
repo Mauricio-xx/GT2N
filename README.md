@@ -64,7 +64,10 @@ The `gt2n/` directory packages this PDK for open-source tools, following the
 layout of [IHP-Open-PDK](https://github.com/IHP-GmbH/IHP-Open-PDK)
 (`libs.ref/` per-library views, `libs.tech/` per-tool collateral):
 LibreLane (Classic flow), OpenROAD, Yosys, KLayout DRC/LVS, Magic, Netgen and
-Verilog simulation models. The files above remain the source of truth;
-`gt2n/` is regenerated from them with `make -C gt2n generate`. See
+Verilog simulation models. The files above remain the source of truth:
+`gt2n/libs.ref` and the generated LibreLane/Magic files are rebuilt with
+`make -C gt2n generate`; the KLayout DRC/LVS decks, Netgen setup, PDN/tap
+scripts, OpenRCX rules and the OpenROAD-flow-scripts platform are maintained
+by hand and must follow changes to the ICV runsets or the layer map. See
 [gt2n/README.md](gt2n/README.md) and the LibreLane macro example in
 [examples/gt2n-librelane-macro](examples/gt2n-librelane-macro).

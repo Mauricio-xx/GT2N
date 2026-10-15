@@ -64,36 +64,46 @@ test-verilog: ## Yosys SAT equivalence of the Verilog models vs Liberty
 	$(PYTHON) $(QA)/stdcells/check_verilog.py
 .PHONY: test-verilog
 
-test-dff: ## Icarus testbench of every flip-flop model (async set/reset)
+test-dff: ## Icarus testbench of every flip-flop model (UDP and GT2N_NO_UDP)
 	@mkdir -p $(RUN_DIR)
-	@set -e; for lib in $(LIBS); do for x in x1 x2 x4; do \
+	@set -e; for lib in $(LIBS); do for x in x1 x2 x4; do for def in "" -DGT2N_NO_UDP; do \
 	  cell=gt2_6t_dffasync_$${x}_$${lib#gt2_6t_}; \
-	  $(IVERILOG) -g2005 -DCELL=$$cell -o $(RUN_DIR)/tb_dff.vvp $(QA)/stdcells/tb_dffasync.v \
+	  $(IVERILOG) -g2005 $$def -DCELL=$$cell -o $(RUN_DIR)/tb_dff.vvp $(QA)/stdcells/tb_dffasync.v \
 	    $(PDK_DIR)/libs.ref/$$lib/verilog/$$lib.v; \
-	  $(VVP) -n $(RUN_DIR)/tb_dff.vvp | grep -q PASS || { echo "FAIL $$cell"; exit 1; }; \
-	  echo "PASS $$cell"; done; done
+	  $(VVP) -n $(RUN_DIR)/tb_dff.vvp | grep -q "^PASS" || { echo "FAIL $$cell $$def"; exit 1; }; \
+	  echo "PASS $$cell $$def"; done; done; done
 .PHONY: test-dff
 
 test-drc: ## KLayout DRC (full mode) of every standard-cell library
 	$(PYTHON) $(QA)/stdcells/run_drc.py --workdir $(RUN_DIR)/drc
 .PHONY: test-drc
 
+test-drc-rules: ## KLayout DRC deck against known-bad/known-good rule fixtures
+	$(PYTHON) $(QA)/drc/run_drc_rules.py --workdir $(RUN_DIR)/drc_rules
+.PHONY: test-drc-rules
+
 test-lvs: ## KLayout transistor-level LVS of every standard cell
 	$(PYTHON) $(QA)/stdcells/run_lvs.py --workdir $(RUN_DIR)/lvs
 .PHONY: test-lvs
 
-test-magic: ## GDS -> Magic -> GDS round trip of every library
+test-lvs-cases: ## Positive and negative LVS cases built from libs.ref cells
+	$(PYTHON) $(QA)/lvs/run_lvs_tests.py --workdir $(RUN_DIR)/lvs_tests
+.PHONY: test-lvs-cases
+
+test-magic: ## GDS -> Magic -> GDS round trip of every library, Magic connectivity and abstract-LEF checks
 	$(PYTHON) $(QA)/magic/run_roundtrip.py --workdir $(RUN_DIR)/magic
+	$(PYTHON) $(QA)/magic/run_connect.py --workdir $(RUN_DIR)/magic-connect
 .PHONY: test-magic
 
-test-librelane-config: ## Load the LibreLane configuration for every library
+test-librelane-config: ## Load the LibreLane configuration of every library; RC units seen by OpenROAD
 	$(PYTHON) $(QA)/librelane/check_config.py
+	$(PYTHON) $(QA)/librelane/check_rc_units.py
 .PHONY: test-librelane-config
 
-test-fast: check-generated test-views test-verilog test-dff ## Quick checks (seconds)
+test-fast: check-generated test-views test-verilog test-dff test-drc-rules ## Quick checks
 .PHONY: test-fast
 
-test: test-fast test-drc test-lvs test-magic test-librelane-config ## All regressions
+test: test-fast test-drc test-lvs test-lvs-cases test-magic test-librelane-config ## All regressions
 .PHONY: test
 
 clean: ## Remove regression outputs

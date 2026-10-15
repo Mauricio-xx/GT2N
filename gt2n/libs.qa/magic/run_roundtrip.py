@@ -33,11 +33,13 @@ def main():
                         str(PDK / "libs.tech" / "magic" / "gt2n.magicrc"),
                         str(HERE / "roundtrip.tcl")], env=env, check=True,
                        capture_output=True, cwd=work)
+        # RTTOP is the wrapper cell roundtrip.tcl places every cell in.
         res = subprocess.run(["klayout", "-b", "-rd", f"a={src}", "-rd", f"b={out}",
-                              "-r", str(HERE / "xor.rb")], capture_output=True, text=True)
+                              "-rd", "extra=RTTOP", "-r", str(HERE / "xor.rb")],
+                             capture_output=True, text=True)
         summary = [l for l in res.stdout.splitlines() if l.startswith("GT2N_XOR")]
         diffs = int(summary[-1].split()[1]) if summary else -1
-        print(f"{lib}: {'PASS' if diffs == 0 else 'FAIL'} ({diffs} differing cell layers)")
+        print(f"{lib}: {'PASS' if diffs == 0 else 'FAIL'} ({diffs} differences in shapes, texts or cells)")
         if diffs != 0:
             print(res.stdout[-2000:])
             failed.append(lib)

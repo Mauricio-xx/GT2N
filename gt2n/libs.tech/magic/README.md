@@ -7,12 +7,37 @@ magic -rcfile $PDK_ROOT/gt2n/libs.tech/magic/gt2n.magicrc
 gds read $PDK_ROOT/gt2n/libs.ref/gt2_6t_w31_svt/gds/gt2_6t_w31_svt.gds
 ```
 
-Layout-level technology: 1 internal unit = 0.5 nm, all front-end and
-frontside layers with their GDS numbers (cell libraries round-trip exactly,
-see `libs.qa/magic`), stacked contacts, connectivity, LEF layer mapping and
-tech-LEF width/spacing rules for the routing layers.
+Layout-level technology: 1 internal unit = 0.5 nm. Every front-end and
+frontside layer is read on its drawing datatype, the routing layers also on
+pin (251) and label (20), and the cell boundary on 235/250; the cell
+libraries round-trip exactly (shapes, texts and cells, see `libs.qa/magic`).
+Port labels on the routing layers are written on the pin datatype, other
+labels on drawing.
+
+- stacked contacts, and connectivity in which cuts that abut on a shared
+  conductor connect (the router places V1 next to V2 with no M2 between);
+- GATE under GCUT or DUMMY is the non-conducting type `gcutgate` (written
+  back to GATE), so cut gate lines are separate nodes;
+- one obstruction type per routing layer (`obsbpr`, `obsm0`..`obsm13`,
+  `obsrdl`) for LEF OBS, also used for OBS on the cut layers; an obstruction
+  never erases routing metal, so pins under OBS are kept. `lef write -hide`
+  (LibreLane `Magic.WriteLEF`) writes obstructions for every routing layer of
+  a macro;
+- LEF layer mapping and the tech-LEF width/spacing rules of the routing
+  layers, also against obstructions. A wire touching an obstruction is a
+  violation, so the Magic DEF+LEF DRC (`MAGIC_DRC_USE_GDS: false`) expects
+  abstracts whose OBS is cut back from the pins, as `lef write -hide` writes
+  them.
+
+LibreLane's `Magic.SpiceExtraction` (routed DEF + cell LEF abstracts) and
+`Netgen.LVS` (cell level, `libs.tech/netgen/gt2n_setup.tcl`) work with this
+technology; transistor-level LVS uses the KLayout deck.
+
+QA: `make -C gt2n test-magic` (`run_roundtrip.py`, `run_connect.py`).
 
 Not supported:
 - backside layers BM1..BM4, BRDL, BV0..BV4 (GDS 910..1000): Magic only
   handles GDS layer numbers up to 255;
+- the FEOL and via label/pin datatypes and prBoundary 235/0 are not read
+  (none occur in the cell libraries);
 - nanosheet device extraction (use the KLayout LVS deck).

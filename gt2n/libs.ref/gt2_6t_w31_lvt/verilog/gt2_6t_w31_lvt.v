@@ -33,24 +33,21 @@ primitive gt2n_udp_dff_sr (Q, D, CLK, RN, SN);
   //  D   CLK   RN  SN  :  Q  :  Q+
       ?    ?     ?   0  :  ?  :  1 ;  // asynchronous set
       ?    ?     0   1  :  ?  :  0 ;  // asynchronous reset
-      0   (01)   1   1  :  ?  :  0 ;
-      1   (01)   1   1  :  ?  :  1 ;
-      0   (01)   1   x  :  ?  :  0 ;
-      1   (01)   x   1  :  ?  :  1 ;
-      0   (x1)   1   1  :  0  :  0 ;
-      1   (x1)   1   1  :  1  :  1 ;
-      0   (0x)   1   1  :  0  :  0 ;
-      1   (0x)   1   1  :  1  :  1 ;
+      0   (01)   ?   1  :  ?  :  0 ;  // capture 0 (or reset)
+      1   (01)   1   ?  :  ?  :  1 ;  // capture 1 (or set)
+      0   (x1)   ?   1  :  0  :  0 ;
+      1   (x1)   1   ?  :  1  :  1 ;
+      0   (0x)   ?   1  :  0  :  0 ;
+      1   (0x)   1   ?  :  1  :  1 ;
       ?   (?0)   ?   ?  :  ?  :  - ;  // falling / steady clock: hold
+      ?   (1x)   ?   ?  :  ?  :  - ;  // 1 -> x is no rising edge
       *    ?     ?   ?  :  ?  :  - ;  // data change without clock edge
       ?    ?    (?1) 1  :  ?  :  - ;  // release of reset
-      ?    ?     1 (?1) :  ?  :  - ;  // release of set
+      ?    ?     1 (?1) :  ?  :  - ;  // release of set (RN = x: Q+ = x)
       ?    0    (?1) ?  :  ?  :  - ;
-      ?    0     ? (?1) :  ?  :  - ;
       ?    1    (?1) ?  :  ?  :  - ;
-      ?    1     ? (?1) :  ?  :  - ;
-      ?    ?     x   1  :  0  :  0 ;  // pessimism reduction
-      ?    ?     1   x  :  1  :  1 ;
+      ?    ?     *   1  :  0  :  0 ;  // RN changes while Q = 0
+      ?    ?     1   *  :  1  :  1 ;  // SN changes while Q = 1
   endtable
 endprimitive
 `endif
@@ -755,7 +752,12 @@ module gt2_6t_dffasync_x1_w31_lvt (
   wire IQ;
 `ifdef GT2N_NO_UDP
   reg IQ_r;
+`ifdef YOSYS
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
+`else
+  wire IQ_clr = SETN & ~RESETN;
+  always @(posedge CLK or negedge RESETN or negedge SETN or posedge IQ_clr) begin
+`endif
     if (!SETN)
       IQ_r <= 1'b1;
     else if (!RESETN)
@@ -800,7 +802,12 @@ module gt2_6t_dffasync_x2_w31_lvt (
   wire IQ;
 `ifdef GT2N_NO_UDP
   reg IQ_r;
+`ifdef YOSYS
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
+`else
+  wire IQ_clr = SETN & ~RESETN;
+  always @(posedge CLK or negedge RESETN or negedge SETN or posedge IQ_clr) begin
+`endif
     if (!SETN)
       IQ_r <= 1'b1;
     else if (!RESETN)
@@ -845,7 +852,12 @@ module gt2_6t_dffasync_x4_w31_lvt (
   wire IQ;
 `ifdef GT2N_NO_UDP
   reg IQ_r;
+`ifdef YOSYS
   always @(posedge CLK or negedge RESETN or negedge SETN) begin
+`else
+  wire IQ_clr = SETN & ~RESETN;
+  always @(posedge CLK or negedge RESETN or negedge SETN or posedge IQ_clr) begin
+`endif
     if (!SETN)
       IQ_r <= 1'b1;
     else if (!RESETN)

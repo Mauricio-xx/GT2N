@@ -6,7 +6,10 @@
 set ::env(PLACE_SITE) "gt2_6t"
 
 # Tap cells tie the buried power rails (BPR) to frontside M1 access pins.
+# The same cell is the end cap: every row segment, also the narrow ones beside
+# macros or in cores below FP_TAPCELL_DIST, then gets a tap at each end.
 set ::env(WELLTAP_CELL) "gt2_6t_tapfspdn_w31_elvt"
+set ::env(ENDCAP_CELL) "gt2_6t_tapfspdn_w31_elvt"
 
 # Synthesis
 set ::env(SYNTH_DRIVING_CELL) "gt2_6t_buf_x4_w31_elvt/Y"
@@ -29,9 +32,15 @@ set ::env(DPL_CELL_PADDING) 0
 set ::env(CTS_ROOT_BUFFER) "gt2_6t_buf_x12_w31_elvt"
 set ::env(CTS_CLK_BUFFERS) "gt2_6t_buf_x8_w31_elvt gt2_6t_buf_x4_w31_elvt gt2_6t_buf_x2_w31_elvt"
 
-# Default constraints (ns, used by the base SDC)
+# Default constraints of the base SDC: clock uncertainty, clock transition
+# and max transition in ns, time derating and I/O delay in % (of the clock
+# period for the I/O delay), max fanout as a cell count.
 set ::env(MAX_FANOUT_CONSTRAINT) 20
 set ::env(CLOCK_UNCERTAINTY_CONSTRAINT) 0.01
 set ::env(CLOCK_TRANSITION_CONSTRAINT) 0.02
 set ::env(TIME_DERATING_CONSTRAINT) 5
 set ::env(IO_DELAY_CONSTRAINT) 20
+# The NLDM tables are characterised up to 100 ps input slew; the Liberty
+# default_max_transition (1000 ps) is far above that. Stricter than the
+# legacy flow, which sets no max transition.
+set ::env(MAX_TRANSITION_CONSTRAINT) 0.1

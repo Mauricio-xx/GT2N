@@ -142,13 +142,24 @@ layout_path = $in_gds || $input || $gds
 raise "Missing -rd input=<layout.gds> (or -rd in_gds=<layout.gds>)" if !layout_path || layout_path.to_s.empty?
 top_cell_name = $topcell || $top_cell
 
-# Placed-and-routed blocks in transistor mode: dissolve the filler instances
-# (no devices, tens of thousands per block) into the top cell before
-# extraction. Their BPR segments still close the supply rails, while the
-# hierarchical extractor and the netlist purge no longer handle one subcircuit
-# per filler. The schematic is expected without fillers (OpenROAD write_cdl
-# without -include_fillers). -rd lvs_flatten_cells= disables this.
-lvs_flatten_cells = ($lvs_flatten_cells || "gt2_6t_filler*").to_s
+# Placed-and-routed blocks in transistor mode: dissolve these instances into
+# the top cell before extraction (-rd lvs_flatten_cells, comma-separated cell
+# name patterns, empty to disable). align then flattens the schematic circuits
+# of these cells, which have no layout counterpart.
+# - Fillers (no devices, tens of thousands per block): their BPR segments
+#   still close the supply rails, while the hierarchical extractor and the
+#   netlist purge no longer handle one subcircuit per filler. OpenROAD
+#   write_cdl still lists the filler instances (the filler LEF macro is CLASS
+#   CORE, not CORE SPACER).
+# - The cells with two vss rails (see lvs_implicit_cells below): flat, their
+#   devices sit on the nets of the block, so a rail the block leaves open is
+#   a mismatch. Joining the rails inside the cell (connect_implicit) while they
+#   are on different block nets runs into a use-after-free in KLayout 0.30.12
+#   (connected_clusters::join_cluster_with, reached from
+#   LayoutToNetlist::join_nets_from_pattern through Circuit::join_pins): such
+#   runs aborted with a corrupted heap and KLayout then hung.
+lvs_flatten_cells = ($lvs_flatten_cells || "gt2_6t_filler*,gt2_6t_dffasync*,gt2_6t_mux2*").to_s
+lvs_flatten_cells = lvs_flatten_cells.split(/[\s,]+/).reject(&:empty?)
 flatten_layout = nil
 if ($lvs_mode || ENV["KLAYOUT_LVS_MODE"]).to_s.downcase == "transistor" && !lvs_flatten_cells.empty?
   ly = RBA::Layout.new(true)
@@ -156,7 +167,9 @@ if ($lvs_mode || ENV["KLAYOUT_LVS_MODE"]).to_s.downcase == "transistor" && !lvs_
   top = (top_cell_name && !top_cell_name.to_s.empty?) ? ly.cell(top_cell_name) : ly.top_cell
   raise "Top cell '#{top_cell_name}' not found in #{layout_path}" unless top
   victims = []
-  top.each_inst { |inst| victims << inst if File.fnmatch(lvs_flatten_cells, inst.cell.name) }
+  top.each_inst do |inst|
+    victims << inst if lvs_flatten_cells.any? { |pattern| File.fnmatch(pattern, inst.cell.name) }
+  end
   unless victims.empty?
     # Copy the shapes (not the labels) in one batch: Instance#flatten updates
     # the layout after every call.
@@ -179,7 +192,7 @@ if ($lvs_mode || ENV["KLAYOUT_LVS_MODE"]).to_s.downcase == "transistor" && !lvs_
       inst.delete
     end
     ly.end_changes
-    puts "INFO : GT2N flattened #{victims.size} '#{lvs_flatten_cells}' instance(s) into #{top.name}"
+    puts "INFO : GT2N flattened #{victims.size} '#{lvs_flatten_cells.join(",")}' instance(s) into #{top.name}"
     flatten_layout = top
   end
 end
@@ -196,13 +209,39 @@ report_lvs($report_file || $report || $output || "lvs_report.lvsdb")
 
 signal_only_lvs_requested = ($signal_only_lvs || ENV["KLAYOUT_LVS_SIGNAL_ONLY"] == "1")
 
+# ICV ignores the bulk of the nanosheet devices (optional BULK pin with
+# pin_compared = false and ignore_pins = {"BULK"}, gt2_main.lvs.rs lines
+# 378-400). The layout devices are extracted as 3-terminal MOS (mos3 below),
+# so read the 4-terminal CDL MOS elements (D G S B) as 3-terminal devices too.
+# W is the total width (W * M), W and L in microns.
+class GT2NMOS3SpiceReader < RBA::NetlistSpiceReaderDelegate
+  def element(circuit, element, name, model, value, nets, params)
+    return super unless element == "M" && nets.size == 4
+    nl = circuit.netlist
+    cls = nl.device_class_by_name(model)
+    unless cls
+      cls = RBA::DeviceClassMOS3Transistor.new
+      cls.name = model
+      nl.add(cls)
+    end
+    error("MOS element #{name} without W or L") unless params["W"] && params["L"]
+    device = circuit.create_device(cls, name)
+    device.connect_terminal("D", nets[0])
+    device.connect_terminal("G", nets[1])
+    device.connect_terminal("S", nets[2])
+    device.set_parameter("W", params["W"] * 1e6 * (params["M"] || 1.0))
+    device.set_parameter("L", params["L"] * 1e6)
+    true
+  end
+end
+
 $cdl_file ||= $netlist
 if $cdl_file
   ref_cdl_file = signal_only_lvs_requested ? signal_only_cdl_path($cdl_file) : $cdl_file
-  schematic(ref_cdl_file)
+  schematic(ref_cdl_file, RBA::NetlistSpiceReader.new(GT2NMOS3SpiceReader.new))
 elsif $schematic
   ref_cdl_file = signal_only_lvs_requested ? signal_only_cdl_path($schematic) : $schematic
-  schematic(ref_cdl_file)
+  schematic(ref_cdl_file, RBA::NetlistSpiceReader.new(GT2NMOS3SpiceReader.new))
 else
   raise "Missing -rd cdl_file=<reference.cdl> (or -rd schematic=<reference.cdl>)"
 end
@@ -228,12 +267,11 @@ verbose(true)
 puts "INFO : GT2N LVS mode = #{lvs_mode}"
 puts "INFO : GT2N LVS threads = #{thread_count}"
 
-if lvs_mode == "abstract"
-  # Physical-only filler cells dominate the final CDL/GDS instance count and do
-  # not contribute logical connectivity.  Keep them out of abstract full-chip
-  # LVS; transistor mode still sees the unfiltered layout.
+if lvs_mode == "abstract" && signal_only_lvs_requested
+  # The filler cells carry only supply rails, which signal-only LVS leaves
+  # out; signal_only_cdl_path drops the filler instances from the schematic.
   select("-gt2_6t_filler*")
-  puts "INFO : GT2N abstract LVS source filter = -gt2_6t_filler*"
+  puts "INFO : GT2N signal-only abstract LVS source filter = -gt2_6t_filler*"
 end
 
 # -----------------------------------------------------------------------------
@@ -468,134 +506,31 @@ connect(aM13, tM13)
 connect(aRDL, tRDL)
 
 # -----------------------------------------------------------------------------
-# Global power/ground naming
+# Supply nets
+#
+# No global bulk nets: like ICV, the devices have no bulk terminal (see
+# GT2NMOS3SpiceReader), so the supply nets come only from the drawn rails,
+# vias and labels, and a cell whose rails do not reach the labelled supply is
+# reported.
+#
+# The flip-flop and mux cells are double height with a vss BPR rail at the
+# bottom and at the top; only the PDN of the block connects the two. Join
+# same-named supply labels inside these cells only (-rd lvs_implicit_cells,
+# comma-separated cell name patterns, empty to disable). They are the only
+# GT2N cells with two rails of the same supply. Joining labels in other cells
+# would hide opens, e.g. in a tap cell (M1 pins and BPR rails both labelled)
+# with a broken via stack. In transistor mode their instances in a block are
+# flattened instead (lvs_flatten_cells), so the join applies to a run of the
+# cell alone and to abstract mode. Signal-only LVS (signal_only_lvs) leaves
+# the supplies out of the compare and joins nothing.
 # -----------------------------------------------------------------------------
-if lvs_mode == "abstract"
-  # Some GT2N multi-row cells expose more than one BPR rail with the same PG
-  # label, e.g. top and bottom "vss" rails in mux/flop cells.  The CDL models
-  # those rail fragments as a single logical PG pin.  KLayout's connect_implicit
-  # and connect_explicit primitives match that intent, but they scale poorly on
-  # full-chip GT2N layouts.  Keep a generated library-wide list here and collapse
-  # duplicate PG pins after extraction as a cheap netlist-normalization step.
-  split_vss_rail_cells = [
-    "gt2_6t_dffasync_x1_w13_elvt",
-    "gt2_6t_dffasync_x1_w13_hvt",
-    "gt2_6t_dffasync_x1_w13_lvt",
-    "gt2_6t_dffasync_x1_w13_svt",
-    "gt2_6t_dffasync_x1_w13_ulvt",
-    "gt2_6t_dffasync_x1_w31_elvt",
-    "gt2_6t_dffasync_x1_w31_hvt",
-    "gt2_6t_dffasync_x1_w31_lvt",
-    "gt2_6t_dffasync_x1_w31_svt",
-    "gt2_6t_dffasync_x1_w31_ulvt",
-    "gt2_6t_dffasync_x2_w13_elvt",
-    "gt2_6t_dffasync_x2_w13_hvt",
-    "gt2_6t_dffasync_x2_w13_lvt",
-    "gt2_6t_dffasync_x2_w13_svt",
-    "gt2_6t_dffasync_x2_w13_ulvt",
-    "gt2_6t_dffasync_x2_w31_elvt",
-    "gt2_6t_dffasync_x2_w31_hvt",
-    "gt2_6t_dffasync_x2_w31_lvt",
-    "gt2_6t_dffasync_x2_w31_svt",
-    "gt2_6t_dffasync_x2_w31_ulvt",
-    "gt2_6t_dffasync_x4_w13_elvt",
-    "gt2_6t_dffasync_x4_w13_hvt",
-    "gt2_6t_dffasync_x4_w13_lvt",
-    "gt2_6t_dffasync_x4_w13_svt",
-    "gt2_6t_dffasync_x4_w13_ulvt",
-    "gt2_6t_dffasync_x4_w31_elvt",
-    "gt2_6t_dffasync_x4_w31_hvt",
-    "gt2_6t_dffasync_x4_w31_lvt",
-    "gt2_6t_dffasync_x4_w31_svt",
-    "gt2_6t_dffasync_x4_w31_ulvt",
-    "gt2_6t_mux2_x1_w13_elvt",
-    "gt2_6t_mux2_x1_w13_hvt",
-    "gt2_6t_mux2_x1_w13_lvt",
-    "gt2_6t_mux2_x1_w13_svt",
-    "gt2_6t_mux2_x1_w13_ulvt",
-    "gt2_6t_mux2_x1_w31_elvt",
-    "gt2_6t_mux2_x1_w31_hvt",
-    "gt2_6t_mux2_x1_w31_lvt",
-    "gt2_6t_mux2_x1_w31_svt",
-    "gt2_6t_mux2_x1_w31_ulvt"
-  ]
-end
-
-def normalize_split_pg_rail_pins(layout_netlist, cell_names, pg_names)
-  removed_pins = 0
-
-  cell_names.each do |cell_name|
-    [cell_name, cell_name.upcase].uniq.each do |candidate_name|
-      circuit = layout_netlist.circuit_by_name(candidate_name)
-      next if circuit.nil?
-
-      pg_names.each do |pg_name|
-        pins = []
-        circuit.each_pin do |pin|
-          pins << pin if pin.name == pg_name
-        end
-        next if pins.size < 2
-
-        pins.sort_by!(&:id)
-        keep_pin = pins.first
-        drop_pins = pins[1..-1] || []
-
-        layout_netlist.each_circuit do |parent|
-          parent.each_subcircuit do |subckt|
-            next unless subckt.circuit == circuit
-
-            keep_net = subckt.net_for_pin(keep_pin.id)
-            drop_pins.each do |pin|
-              drop_net = subckt.net_for_pin(pin.id)
-              if keep_net && drop_net && keep_net != drop_net
-                parent.join_nets(keep_net, drop_net)
-              elsif keep_net.nil? && drop_net
-                subckt.connect_pin(keep_pin.id, drop_net)
-                keep_net = drop_net
-              end
-              subckt.disconnect_pin(pin.id)
-            end
-          end
-        end
-
-        keep_net = circuit.net_for_pin(keep_pin.id)
-        drop_pins.each do |pin|
-          drop_net = circuit.net_for_pin(pin.id)
-          if keep_net && drop_net && keep_net != drop_net
-            circuit.join_nets(keep_net, drop_net)
-          elsif keep_net.nil? && drop_net
-            circuit.connect_pin(keep_pin.id, drop_net)
-            keep_net = drop_net
-          end
-          circuit.disconnect_pin(pin.id)
-          circuit.remove_pin(pin.id)
-          removed_pins += 1
-        end
-      end
-    end
-  end
-
-  puts "INFO : GT2N normalized #{removed_pins} split PG abstract pins"
-end
-
-if lvs_mode == "transistor"
-  # Nanosheet devices have no physical body contact: the bulk terminals of
-  # the 4-terminal CDL are tied to the cell supplies. Model that by making
-  # the substrate/well partitions global nets named like the cell PG pins
-  # and joining them with the labelled supply nets.
-  #
-  # The implicit join is limited to the standard cells with devices (some
-  # have two rails with the same PG label). Applied to a placed-and-routed
-  # top cell it would hide supply opens, and its run time grows with the
-  # square of a cell's instance count, which rules out the filler (no
-  # devices, tens of thousands of instances in a block).
-  lvs_ground_net = ($lvs_ground_net || "vss").to_s
-  lvs_power_net = ($lvs_power_net || "vdd").to_s
-  lvs_implicit_cells = ($lvs_implicit_cells || "gt2_6t_[^f]*").to_s
-  connect_global(gPSUB, lvs_ground_net)
-  connect_global(gNWELL, lvs_power_net)
-  connect_implicit(lvs_implicit_cells, lvs_ground_net)
-  connect_implicit(lvs_implicit_cells, lvs_power_net)
+lvs_ground_net = ($lvs_ground_net || "vss").to_s
+lvs_power_net = ($lvs_power_net || "vdd").to_s
+lvs_implicit_cells = ($lvs_implicit_cells || "gt2_6t_dffasync*,gt2_6t_mux2*").to_s.split(/[\s,]+/).reject(&:empty?)
+lvs_implicit_cells = [] if signal_only_lvs_requested
+lvs_implicit_cells.each do |pattern|
+  connect_implicit(pattern, lvs_ground_net)
+  connect_implicit(pattern, lvs_power_net)
 end
 
 # -----------------------------------------------------------------------------
@@ -627,21 +562,22 @@ if lvs_mode == "transistor"
   P_SRAMVT = P_base & aSRAMVT
   P_LVT = P_base - aELVT - aULVT - aSVT - aHVT - aSRAMVT
 
-  # Device dimensions in microns to match CDL W/L units
+  # Device dimensions in microns to match CDL W/L units. No bulk terminal
+  # (ICV: BULK pin_compared = false, ignore_pins = {"BULK"}).
 
-  extract_devices(mos4("nmos_elvt"),   { "SD" => N_src_drn, "G" => N_ELVT,   "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
-  extract_devices(mos4("nmos_ulvt"),   { "SD" => N_src_drn, "G" => N_ULVT,   "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
-  extract_devices(mos4("nmos_svt"),    { "SD" => N_src_drn, "G" => N_SVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
-  extract_devices(mos4("nmos_hvt"),    { "SD" => N_src_drn, "G" => N_HVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
-  extract_devices(mos4("nmos_sramvt"), { "SD" => N_src_drn, "G" => N_SRAMVT, "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
-  extract_devices(mos4("nmos_lvt"),    { "SD" => N_src_drn, "G" => N_LVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY, "W" => gPSUB })
+  extract_devices(mos3("nmos_elvt"),   { "SD" => N_src_drn, "G" => N_ELVT,   "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("nmos_ulvt"),   { "SD" => N_src_drn, "G" => N_ULVT,   "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("nmos_svt"),    { "SD" => N_src_drn, "G" => N_SVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("nmos_hvt"),    { "SD" => N_src_drn, "G" => N_HVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("nmos_sramvt"), { "SD" => N_src_drn, "G" => N_SRAMVT, "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("nmos_lvt"),    { "SD" => N_src_drn, "G" => N_LVT,    "tS" => N_src_drn, "tD" => N_src_drn, "tG" => gPOLY })
 
-  extract_devices(mos4("pmos_elvt"),   { "SD" => P_src_drn, "G" => P_ELVT,   "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
-  extract_devices(mos4("pmos_ulvt"),   { "SD" => P_src_drn, "G" => P_ULVT,   "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
-  extract_devices(mos4("pmos_svt"),    { "SD" => P_src_drn, "G" => P_SVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
-  extract_devices(mos4("pmos_hvt"),    { "SD" => P_src_drn, "G" => P_HVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
-  extract_devices(mos4("pmos_sramvt"), { "SD" => P_src_drn, "G" => P_SRAMVT, "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
-  extract_devices(mos4("pmos_lvt"),    { "SD" => P_src_drn, "G" => P_LVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY, "W" => gNWELL })
+  extract_devices(mos3("pmos_elvt"),   { "SD" => P_src_drn, "G" => P_ELVT,   "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("pmos_ulvt"),   { "SD" => P_src_drn, "G" => P_ULVT,   "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("pmos_svt"),    { "SD" => P_src_drn, "G" => P_SVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("pmos_hvt"),    { "SD" => P_src_drn, "G" => P_HVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("pmos_sramvt"), { "SD" => P_src_drn, "G" => P_SRAMVT, "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
+  extract_devices(mos3("pmos_lvt"),    { "SD" => P_src_drn, "G" => P_LVT,    "tS" => P_src_drn, "tD" => P_src_drn, "tG" => gPOLY })
 end
 
 if lvs_mode == "abstract"
@@ -962,7 +898,51 @@ def apply_def_instance_names(layout_netlist, def_file, gds_file)
   puts "INFO : GT2N DEF instance-name recovery renamed=#{renamed} missed=#{missed} duplicate_keys=#{duplicate_keys} def_units=#{def_units} height_masters=#{place_heights.size}"
 end
 
-netlist
+begin
+  netlist
+rescue
+  # Extraction errors, e.g. a rail of a split-rail cell with no connection at
+  # all ("Must-connect subnet ... does not have any pin at all").
+  puts "ERROR : Netlist extraction failed"
+  puts "ERROR : Netlists don't match"
+  raise
+end
+
+# Supply checks that the compare alone does not make. Errors are printed,
+# added to the report and make the run fail.
+gt2n_lvs_errors = []
+def gt2n_lvs_error(errors, l2n, cell_name, message)
+  puts "ERROR : #{message}"
+  errors << message
+  entry = RBA::LogEntryData.new
+  entry.severity = RBA::Severity::Error
+  entry.category_name = "GT2N_SUPPLY"
+  entry.cell_name = cell_name.to_s
+  entry.message = message
+  l2n.add_log_entry(entry)
+end
+
+def gt2n_label_names(net)
+  net ? net.name.to_s.downcase.split(/[|,]/).reject(&:empty?) : []
+end
+
+# Split-rail cells (lvs_implicit_cells) in a block (abstract mode, or not
+# flattened): when the block does not connect all rails of an instance,
+# KLayout still joins them through the implicit connection and only warns on
+# the parent cell ("must be connected further up in the hierarchy"). That is
+# a supply open. In a run of the split-rail cell alone the warning is on the
+# cell itself and expected.
+must_connect = []
+lvs_data.each_log_entry do |entry|
+  next unless entry.category_name == "must-connect"
+  next if lvs_implicit_cells.any? { |pattern| File.fnmatch(pattern, entry.cell_name, File::FNM_CASEFOLD) }
+  must_connect << entry
+end
+must_connect.each do |entry|
+  gt2n_lvs_error(gt2n_lvs_errors, lvs_data, entry.cell_name,
+                 "Split supply rails not connected in #{entry.cell_name}: #{entry.message.gsub(/\s*\n\s*/, " ")}")
+end
+
 if lvs_mode == "abstract" && $def_file
   apply_def_instance_names(netlist, $def_file, ($in_gds || $input))
   signal_only_lvs_active = ($signal_only_lvs || ENV["KLAYOUT_LVS_SIGNAL_ONLY"] == "1")
@@ -1017,42 +997,100 @@ if lvs_mode == "transistor"
   puts "INFO : GT2N flattened #{flattened} nested standard-cell instance(s) in the schematic"
 end
 
+# Device-less cells (filler, tap cells) have empty CDL subcircuits and are
+# purged on both sides before the compare, so the compare checks nothing of
+# them. For such a top cell check the supplies instead: each supply label
+# forms exactly one net (a tap cell with a broken BPR-to-M1 via stack has two)
+# and no net carries both.
+if lvs_mode == "transistor"
+  layout_top = netlist.top_circuit
+  if layout_top && layout_top.each_device.to_a.empty? && layout_top.each_subcircuit.to_a.empty?
+    supplies = [lvs_power_net, lvs_ground_net].map(&:downcase)
+    errors_before = gt2n_lvs_errors.size
+    net_count = Hash.new(0)
+    layout_top.each_net do |net|
+      names = gt2n_label_names(net) & supplies
+      names.each { |name| net_count[name] += 1 }
+      if names.size > 1
+        gt2n_lvs_error(gt2n_lvs_errors, lvs_data, layout_top.name,
+                       "Supply short in device-less cell #{layout_top.name}: net #{net.name}")
+      end
+    end
+    supplies.each do |name|
+      next if net_count[name] == 1
+      gt2n_lvs_error(gt2n_lvs_errors, lvs_data, layout_top.name,
+                     "Supply #{name} of device-less cell #{layout_top.name} forms #{net_count[name]} nets (expected 1)")
+    end
+    if gt2n_lvs_errors.size == errors_before
+      puts "INFO : GT2N device-less cell #{layout_top.name}: supply check passed (#{supplies.join(", ")})"
+    end
+  end
+end
+
 align
 netlist.simplify
 # Device-less circuits (filler, tap cells) are purged by simplify on the
 # layout side; purge them from the reference as well in transistor mode.
 schematic.simplify if lvs_mode == "transistor"
 
-# Tolerances (ICV checks W/L with 0.1% + 1nm)
+# ICV compares W and L exactly (check_property with {{"W"}, {"L"}} and no
+# tolerance, gt2_main.lvs.rs lines 412-420). At this node 1 nm is 7% of the
+# 14 nm gate length and 8% of a 13 nm sheet; the tolerance below only absorbs
+# floating-point noise (0.01 nm, a tenth of the database unit).
 if lvs_mode == "transistor"
-  tolerance("nmos_elvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_elvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_ulvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_ulvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_svt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_svt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_hvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_hvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_sramvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_sramvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_lvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("nmos_lvt", "L", :absolute => 1.nm, :relative => 0.001)
-
-  tolerance("pmos_elvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_elvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_ulvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_ulvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_svt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_svt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_hvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_hvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_sramvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_sramvt", "L", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_lvt", "W", :absolute => 1.nm, :relative => 0.001)
-  tolerance("pmos_lvt", "L", :absolute => 1.nm, :relative => 0.001)
+  ["nmos", "pmos"].each do |type|
+    ["elvt", "ulvt", "svt", "hvt", "sramvt", "lvt"].each do |vt|
+      tolerance("#{type}_#{vt}", "W", :absolute => 0.01.nm)
+      tolerance("#{type}_#{vt}", "L", :absolute => 0.01.nm)
+    end
+  end
 end
 
-if !compare
+lvs_ok = compare
+
+# Supply guard. The compare pairs nets by topology only: when the cell rails
+# are cut off from the labelled supply (e.g. a tap cell without VBPR in a
+# small block), the labelled net floats and is purged, and the rail net still
+# pairs with the schematic supply. Require each top-level supply net of the
+# schematic to pair with a layout net labelled as the same kind of supply
+# (vLVS_POWER_NAMES / vLVS_GROUND_NAMES), and the other way round.
+if lvs_ok && !signal_only_lvs_requested
+  power_names = (vLVS_POWER_NAMES + [lvs_power_net]).map(&:downcase)
+  ground_names = (vLVS_GROUND_NAMES + [lvs_ground_net]).map(&:downcase)
+  supply_kind = lambda do |net|
+    names = gt2n_label_names(net)
+    kind = []
+    kind << "power" if (names & power_names).size > 0
+    kind << "ground" if (names & ground_names).size > 0
+    kind.empty? ? nil : kind.join("+")
+  end
+  layout_top = netlist.top_circuit
+  xref = lvs_data.xref
+  top_pair = nil
+  xref.each_circuit_pair do |cp|
+    top_pair = cp if layout_top && cp.first && cp.first.name == layout_top.name
+  end
+  if top_pair
+    devices = xref.each_device_pair(top_pair).to_a.size
+    subcircuits = xref.each_subcircuit_pair(top_pair).to_a.size
+    puts "INFO : GT2N top circuit #{layout_top.name}: #{devices} device pair(s), #{subcircuits} subcircuit pair(s) compared"
+    xref.each_net_pair(top_pair) do |np|
+      layout_kind = supply_kind.call(np.first)
+      schematic_kind = supply_kind.call(np.second)
+      next if layout_kind == schematic_kind
+      layout_name = np.first ? np.first.expanded_name : "(none)"
+      schematic_name = np.second ? np.second.expanded_name : "(none)"
+      gt2n_lvs_error(gt2n_lvs_errors, lvs_data, layout_top.name,
+                     "Supply net mismatch in #{layout_top.name}: schematic net #{schematic_name} " +
+                     "(#{schematic_kind || "no supply"}) pairs with layout net #{layout_name} " +
+                     "(#{layout_kind || "no supply label"})")
+    end
+  else
+    puts "INFO : GT2N top circuit: nothing compared (no devices)"
+  end
+end
+
+if !lvs_ok || !gt2n_lvs_errors.empty?
   puts "ERROR : Netlists don't match"
 else
   puts "INFO : Congratulations! Netlists match."

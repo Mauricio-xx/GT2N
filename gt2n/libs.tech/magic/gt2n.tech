@@ -62,6 +62,7 @@ types
   vtsvt svt
   vthvt hvt
   vtsram sramvt
+  gate gcutgate
   bpr bpr
   metal0 m0
   metal1 m1
@@ -95,6 +96,22 @@ types
   metal11 v11
   metal12 v12
   metal13 v13
+  bpr obsbpr
+  metal0 obsm0
+  metal1 obsm1
+  metal2 obsm2
+  metal3 obsm3
+  metal4 obsm4
+  metal5 obsm5
+  metal6 obsm6
+  metal7 obsm7
+  metal8 obsm8
+  metal9 obsm9
+  metal10 obsm10
+  metal11 obsm11
+  metal12 obsm12
+  metal13 obsm13
+  rdl obsrdl
   comment boundary
 end
 
@@ -138,6 +155,7 @@ styles
   svt implant3
   hvt implant4
   sramvt implant1
+  gcutgate poly_resist_stripes
   bpr metal9
   m0 metal1
   m1 metal2
@@ -171,30 +189,63 @@ styles
   v11 via1
   v12 via1
   v13 via1
+  obsbpr obsmetal9
+  obsm0 obsmetal1
+  obsm1 obsmetal2
+  obsm2 obsmetal3
+  obsm3 obsmetal4
+  obsm4 obsmetal5
+  obsm5 obsmetal6
+  obsm6 obsmetal7
+  obsm7 obsmetal8
+  obsm8 obsmetal9
+  obsm9 obsmetal1
+  obsm10 obsmetal2
+  obsm11 obsmetal3
+  obsm12 obsmetal4
+  obsm13 obsmetal5
+  obsrdl obsmetal6
   boundary subcircuit
 end
 
 compose
+  paint bpr obsbpr bpr
+  paint m0 obsm0 m0
+  paint m1 obsm1 m1
+  paint m2 obsm2 m2
+  paint m3 obsm3 m3
+  paint m4 obsm4 m4
+  paint m5 obsm5 m5
+  paint m6 obsm6 m6
+  paint m7 obsm7 m7
+  paint m8 obsm8 m8
+  paint m9 obsm9 m9
+  paint m10 obsm10 m10
+  paint m11 obsm11 m11
+  paint m12 obsm12 m12
+  paint m13 obsm13 m13
+  paint rdl obsrdl rdl
 end
 
 connect
-  vbpr bpr,sdcon
-  vsd sdcon,m0
-  vg gate,m0
-  v0 m0,m1
-  v1 m1,m2
-  v2 m2,m3
-  v3 m3,m4
-  v4 m4,m5
-  v5 m5,m6
-  v6 m6,m7
-  v7 m7,m8
-  v8 m8,m9
-  v9 m9,m10
-  v10 m10,m11
-  v11 m11,m12
-  v12 m12,m13
-  v13 m13,rdl
+  sdcon,vbpr,vsd sdcon,vbpr,vsd
+  gate,vg gate,vg
+  bpr,vbpr bpr,vbpr
+  m0,vsd,vg,v0 m0,vsd,vg,v0
+  m1,v0,v1 m1,v0,v1
+  m2,v1,v2 m2,v1,v2
+  m3,v2,v3 m3,v2,v3
+  m4,v3,v4 m4,v3,v4
+  m5,v4,v5 m5,v4,v5
+  m6,v5,v6 m6,v5,v6
+  m7,v6,v7 m7,v6,v7
+  m8,v7,v8 m8,v7,v8
+  m9,v8,v9 m9,v8,v9
+  m10,v9,v10 m10,v9,v10
+  m11,v10,v11 m11,v10,v11
+  m12,v11,v12 m12,v11,v12
+  m13,v12,v13 m13,v12,v13
+  rdl,v13 rdl,v13
 end
 
 cifoutput
@@ -208,7 +259,7 @@ style gds
   layer ACT act
     labels act
     calma 2 0
-  layer GATE gate,vg
+  layer GATE gate,vg,gcutgate
     labels gate
     calma 3 0
   layer DUMMY dummy
@@ -242,97 +293,97 @@ style gds
     labels sramvt
     calma 98 0
   layer BPR bpr,vbpr
-    labels bpr
+    labels bpr noport
     calma 8 0
   layer BPRP
     labels bpr port
     calma 8 251
   layer M0 m0,vsd,vg,v0
-    labels m0
+    labels m0 noport
     calma 20 0
   layer M0P
     labels m0 port
     calma 20 251
   layer M1 m1,v0,v1
-    labels m1
+    labels m1 noport
     calma 25 0
   layer M1P
     labels m1 port
     calma 25 251
   layer M2 m2,v1,v2
-    labels m2
+    labels m2 noport
     calma 30 0
   layer M2P
     labels m2 port
     calma 30 251
   layer M3 m3,v2,v3
-    labels m3
+    labels m3 noport
     calma 35 0
   layer M3P
     labels m3 port
     calma 35 251
   layer M4 m4,v3,v4
-    labels m4
+    labels m4 noport
     calma 40 0
   layer M4P
     labels m4 port
     calma 40 251
   layer M5 m5,v4,v5
-    labels m5
+    labels m5 noport
     calma 45 0
   layer M5P
     labels m5 port
     calma 45 251
   layer M6 m6,v5,v6
-    labels m6
+    labels m6 noport
     calma 50 0
   layer M6P
     labels m6 port
     calma 50 251
   layer M7 m7,v6,v7
-    labels m7
+    labels m7 noport
     calma 55 0
   layer M7P
     labels m7 port
     calma 55 251
   layer M8 m8,v7,v8
-    labels m8
+    labels m8 noport
     calma 60 0
   layer M8P
     labels m8 port
     calma 60 251
   layer M9 m9,v8,v9
-    labels m9
+    labels m9 noport
     calma 65 0
   layer M9P
     labels m9 port
     calma 65 251
   layer M10 m10,v9,v10
-    labels m10
+    labels m10 noport
     calma 70 0
   layer M10P
     labels m10 port
     calma 70 251
   layer M11 m11,v10,v11
-    labels m11
+    labels m11 noport
     calma 75 0
   layer M11P
     labels m11 port
     calma 75 251
   layer M12 m12,v11,v12
-    labels m12
+    labels m12 noport
     calma 80 0
   layer M12P
     labels m12 port
     calma 80 251
   layer M13 m13,v12,v13
-    labels m13
+    labels m13 noport
     calma 85 0
   layer M13P
     labels m13 port
     calma 85 251
   layer RDL rdl,v13
-    labels rdl
+    labels rdl noport
     calma 90 0
   layer RDLP
     labels rdl port
@@ -385,8 +436,11 @@ style gds
     labels ACT
     calma ACT 2 0
   layer gate GATE
+    and-not DUMMY,GCUT
     labels GATE
     calma GATE 3 0
+  layer gcutgate GATE
+    and DUMMY,GCUT
   layer dummy DUMMY
     labels DUMMY
     calma DUMMY 4 0
@@ -600,39 +654,56 @@ style gds
 end
 
 drc
-  # Minimum width / spacing of the routing stack (tech LEF values).
+  # Minimum width / spacing of the routing stack (tech LEF values). The
+  # same spacing applies to LEF obstructions, which must not be touched.
   width bpr,vbpr 64 "BPR width < 32 nm"
   spacing bpr,vbpr bpr,vbpr 224 touching_ok "BPR spacing < 112 nm"
+  spacing bpr,vbpr obsbpr 224 touching_illegal "BPR spacing to obstruction < 112 nm"
   width m0,vsd,vg,v0 24 "M0 width < 12 nm"
   spacing m0,vsd,vg,v0 m0,vsd,vg,v0 24 touching_ok "M0 spacing < 12 nm"
+  spacing m0,vsd,vg,v0 obsm0 24 touching_illegal "M0 spacing to obstruction < 12 nm"
   width m1,v0,v1 28 "M1 width < 14 nm"
   spacing m1,v0,v1 m1,v0,v1 28 touching_ok "M1 spacing < 14 nm"
+  spacing m1,v0,v1 obsm1 28 touching_illegal "M1 spacing to obstruction < 14 nm"
   width m2,v1,v2 24 "M2 width < 12 nm"
   spacing m2,v1,v2 m2,v1,v2 24 touching_ok "M2 spacing < 12 nm"
+  spacing m2,v1,v2 obsm2 24 touching_illegal "M2 spacing to obstruction < 12 nm"
   width m3,v2,v3 28 "M3 width < 14 nm"
   spacing m3,v2,v3 m3,v2,v3 28 touching_ok "M3 spacing < 14 nm"
+  spacing m3,v2,v3 obsm3 28 touching_illegal "M3 spacing to obstruction < 14 nm"
   width m4,v3,v4 42 "M4 width < 21 nm"
   spacing m4,v3,v4 m4,v3,v4 42 touching_ok "M4 spacing < 21 nm"
+  spacing m4,v3,v4 obsm4 42 touching_illegal "M4 spacing to obstruction < 21 nm"
   width m5,v4,v5 42 "M5 width < 21 nm"
   spacing m5,v4,v5 m5,v4,v5 42 touching_ok "M5 spacing < 21 nm"
+  spacing m5,v4,v5 obsm5 42 touching_illegal "M5 spacing to obstruction < 21 nm"
   width m6,v5,v6 76 "M6 width < 38 nm"
   spacing m6,v5,v6 m6,v5,v6 76 touching_ok "M6 spacing < 38 nm"
+  spacing m6,v5,v6 obsm6 76 touching_illegal "M6 spacing to obstruction < 38 nm"
   width m7,v6,v7 76 "M7 width < 38 nm"
   spacing m7,v6,v7 m7,v6,v7 76 touching_ok "M7 spacing < 38 nm"
+  spacing m7,v6,v7 obsm7 76 touching_illegal "M7 spacing to obstruction < 38 nm"
   width m8,v7,v8 76 "M8 width < 38 nm"
   spacing m8,v7,v8 m8,v7,v8 76 touching_ok "M8 spacing < 38 nm"
+  spacing m8,v7,v8 obsm8 76 touching_illegal "M8 spacing to obstruction < 38 nm"
   width m9,v8,v9 76 "M9 width < 38 nm"
   spacing m9,v8,v9 m9,v8,v9 76 touching_ok "M9 spacing < 38 nm"
+  spacing m9,v8,v9 obsm9 76 touching_illegal "M9 spacing to obstruction < 38 nm"
   width m10,v9,v10 112 "M10 width < 56 nm"
   spacing m10,v9,v10 m10,v9,v10 112 touching_ok "M10 spacing < 56 nm"
+  spacing m10,v9,v10 obsm10 112 touching_illegal "M10 spacing to obstruction < 56 nm"
   width m11,v10,v11 112 "M11 width < 56 nm"
   spacing m11,v10,v11 m11,v10,v11 112 touching_ok "M11 spacing < 56 nm"
+  spacing m11,v10,v11 obsm11 112 touching_illegal "M11 spacing to obstruction < 56 nm"
   width m12,v11,v12 720 "M12 width < 360 nm"
   spacing m12,v11,v12 m12,v11,v12 720 touching_ok "M12 spacing < 360 nm"
+  spacing m12,v11,v12 obsm12 720 touching_illegal "M12 spacing to obstruction < 360 nm"
   width m13,v12,v13 720 "M13 width < 360 nm"
   spacing m13,v12,v13 m13,v12,v13 720 touching_ok "M13 spacing < 360 nm"
+  spacing m13,v12,v13 obsm13 720 touching_illegal "M13 spacing to obstruction < 360 nm"
   width rdl,v13 3200 "RDL width < 1600 nm"
   spacing rdl,v13 rdl,v13 3200 touching_ok "RDL spacing < 1600 nm"
+  spacing rdl,v13 obsrdl 3200 touching_illegal "RDL spacing to obstruction < 1600 nm"
 end
 
 extract
@@ -690,6 +761,22 @@ lef
   routing m12 M12
   routing m13 M13
   routing rdl RDL
+  obs obsbpr BPR
+  obs obsm0 M0
+  obs obsm1 M1
+  obs obsm2 M2
+  obs obsm3 M3
+  obs obsm4 M4
+  obs obsm5 M5
+  obs obsm6 M6
+  obs obsm7 M7
+  obs obsm8 M8
+  obs obsm9 M9
+  obs obsm10 M10
+  obs obsm11 M11
+  obs obsm12 M12
+  obs obsm13 M13
+  obs obsrdl RDL
   cut vbpr VBPR
   cut vsd VSD
   cut vg VG
@@ -707,6 +794,23 @@ lef
   cut v11 V11
   cut v12 V12
   cut v13 V13
+  obs obsbpr VBPR
+  obs obsm0 VSD
+  obs obsm0 VG
+  obs obsm0,obsm1 V0
+  obs obsm1,obsm2 V1
+  obs obsm2,obsm3 V2
+  obs obsm3,obsm4 V3
+  obs obsm4,obsm5 V4
+  obs obsm5,obsm6 V5
+  obs obsm6,obsm7 V6
+  obs obsm7,obsm8 V7
+  obs obsm8,obsm9 V8
+  obs obsm9,obsm10 V9
+  obs obsm10,obsm11 V10
+  obs obsm11,obsm12 V11
+  obs obsm12,obsm13 V12
+  obs obsm13,obsrdl V13
   masterslice gate GATE
   masterslice act ACT
   masterslice nwell NW NWELL

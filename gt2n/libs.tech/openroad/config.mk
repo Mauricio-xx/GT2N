@@ -55,6 +55,8 @@ export CDL_FILE ?= $(foreach l,$(GT2N_ALL_LIBS),$(GT2N_LIBS_REF)/$(l)/cdl/$(l).c
 
 # Physical-only cells are never mapped by synthesis/resizing.
 export DONT_USE_CELLS += gt2_6t_decapcc_* gt2_6t_tap* gt2_6t_filler_*
+# mux2_x1: the upstream layout violates V0.M1.1 (libs.qa/stdcells/drc_waivers.txt)
+export DONT_USE_CELLS += gt2_6t_mux2_x1_*
 
 export FILL_CELLS ?= gt2_6t_filler_$(GT2N_FLAVOR)
 

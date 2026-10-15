@@ -21,14 +21,18 @@
 #
 # KLayout port of icv_runset/gt2_main.drc.rs (IC Validator). Rule names and
 # values follow the ICV runset; rules marked "(tech LEF)" are not part of the
-# ICV runset and are derived from the minimum width/spacing in gt2_tech.lef
-# for the upper and backside metal stacks that the router/PDN generator uses.
+# ICV runset and are derived from the minimum width/spacing and via enclosure
+# in gt2_tech.lef for the upper and backside metal stacks that the router/PDN
+# generator uses. GRID.1 checks the 0.5 nm manufacturing grid of the legacy
+# data (techfile mfgGrid, LEF MANUFACTURINGGRID 0.0005); the GDS database unit
+# of this PDK is 0.1 nm, so off-grid vertices can be written.
 #
 # Modes
 #   route  - default. Checks the routing layers OpenROAD writes (M1..RDL and
 #            the backside stack). Standard-cell device layers are skipped.
 #   full   - also checks device / local-interconnect layers (BPR, ACT, GATE,
-#            SDCON, M0, ...). Use for library work or cell-level signoff.
+#            SDCON, M0, ...). Use for library work or cell-level signoff;
+#            it also runs on placed blocks.
 #
 # Variables (-rd name=value). Aliases cover the conventions of OpenROAD-
 # flow-scripts, LibreLane and the IHP run_drc.py wrappers:
@@ -37,7 +41,6 @@
 #   report_file | report | output | rdb  KLayout report database
 #   drc_mode | run_mode_gt2n           route | full
 #   drc_threads | threads | thr        worker threads
-#   drc_tile_um                        enable tiling with this tile size
 #   drc_use_nets                       1 = net-aware checks (default in full)
 #
 # Example
@@ -58,22 +61,17 @@ end
 report_path = $report_file || $report || $output || $rdb || File.join(File.dirname(gds_path.to_s), "gt2n_drc.lyrdb")
 report("GT2N KLayout DRC", report_path)
 
-drc_mode = ($drc_mode || ENV["KLAYOUT_DRC_MODE"] || "route").to_s.downcase
+drc_mode = ($drc_mode || $run_mode_gt2n || ENV["KLAYOUT_DRC_MODE"] || "route").to_s.downcase
 drc_threads = ($drc_threads || $threads || $thr || ENV["KLAYOUT_DRC_THREADS"] || "0").to_i
-drc_tile_um = ($drc_tile_um || ENV["KLAYOUT_DRC_TILE_UM"] || "0").to_f
+raise "Unknown drc_mode '#{drc_mode}' (route | full)" unless ["route", "full", "strict"].include?(drc_mode)
 full_mode = (drc_mode == "full" || drc_mode == "strict")
 use_nets_default = full_mode ? "1" : "0"
 use_nets = (($drc_use_nets || ENV["KLAYOUT_DRC_USE_NETS"] || use_nets_default).to_s == "1")
 
-if drc_tile_um > 0
-  tiles(drc_tile_um.um)
-  tile_borders(2.um)
-end
-
 deep
 threads(drc_threads) if drc_threads > 0
 verbose(true)
-puts "GT2N DRC knobs: mode=#{drc_mode} threads=#{drc_threads} tile_um=#{drc_tile_um} use_nets=#{use_nets}"
+puts "GT2N DRC knobs: mode=#{drc_mode} threads=#{drc_threads} use_nets=#{use_nets}"
 
 # Layer map from icv_runset/gt2_main.drc.rs.
 nwell  = input(1, 0)
@@ -151,36 +149,63 @@ end
 # KLayout edge-pair angle convention used below:
 #   horizontal measured dimension -> vertical edges -> with_angle(90)
 #   vertical measured dimension   -> horizontal edges -> with_angle(0)
+#
+# ICV constructs and their KLayout form:
+#   "layer not internal1(layer, == v)"   exact_size(layer, v, angle): every
+#       part of a shape that no width measurement of exactly v spans, so
+#       shapes that are too large are flagged as well as too small ones
+#   not_inside_touching_edge(edges, metal)  misaligned(via, metal, angle): the
+#       parts of the via edges that do not lie on the metal boundary with the
+#       via inside the metal (zero enclosure), so edges outside the metal,
+#       inside it, or on its boundary from outside are all flagged
+#   external_corner1(CONVEX_TO_CONVEX)   space(d, euclidian, projecting < 1.dbu):
+#       euclidian pairs whose edges do not overlap in projection
+#   not_rectangles(layer)                layer.non_rectangles on merged shapes,
+#       so a bend made of several abutting or overlapping rectangles is flagged
+
+def exact_size(layer, value, angle)
+  exact = layer.width(value + 1.dbu, projection).with_angle(angle).with_distance(value, value + 1.dbu)
+  (layer - exact.polygons).merged
+end
+
+def misaligned(via, metal, angle)
+  via.edges.with_angle(angle) - metal.enclosing(via, 1.dbu, projection).second_edges
+end
 
 if full_mode
   ### BPR and lower/device layers
-  bpr.drc(width(projection) != 32.nm).with_angle(0).output("BPR.1", "BPR.1 : BPR vertical width = 32 nm")
+  exact_size(bpr, 32.nm, 0).output("BPR.1", "BPR.1 : BPR vertical width = 32 nm")
   bpr.space(112.nm, projection).with_angle(0).output("BPR.2", "BPR.2 : Minimum vertical spacing between BPR layers >= 112 nm")
-  bpr.space(10.um, projection).with_angle(90).output("BPR.3", "BPR.3 : BPR must be continuous")
-  bpr.dup.raw.non_rectangles.output("BPR.4", "BPR.4 : BPR may not bend")
+  # Rail ends only, flat: a polygon space check pairs every BPR edge within
+  # 10 um first, which does not fit in memory on a placed block, and a
+  # hierarchical edge check also reports a gap inside neighbouring cells.
+  bpr.edges.with_angle(90).flatten.space(10.um, projection).output("BPR.3", "BPR.3 : BPR must be continuous")
+  bpr.non_rectangles.output("BPR.4", "BPR.4 : BPR may not bend")
 
-  vbpr.drc(width(projection) != 11.nm).with_angle(0).output("VBPR.1", "VBPR.1 : Vertical width of VBPR = 11 nm")
-  vbpr.drc(width(projection) != 16.nm).with_angle(90).output("VBPR.2", "VBPR.2 : Horizontal width of VBPR = 16 nm")
+  exact_size(vbpr, 11.nm, 0).output("VBPR.1", "VBPR.1 : Vertical width of VBPR = 11 nm")
+  exact_size(vbpr, 16.nm, 90).output("VBPR.2", "VBPR.2 : Horizontal width of VBPR = 16 nm")
   vbpr.overlapping(gcut).output("VBPR.3", "VBPR.3 : VBPR must not overlap GCUT")
   vbpr.not_inside(sdcon).output("VBPR.4", "VBPR.4 : VBPR may not lie outside SDCON")
 
-  gate.drc(width(projection) != 14.nm).with_angle(90).output("GATE.1", "GATE.1 : Exact horizontal width of GATE = 14 nm")
-  # ICV checks the gaps inside the GATE layer extent only; open row ends are
-  # not violations. A bounded search window gives the same result.
+  exact_size(gate, 14.nm, 90).output("GATE.1", "GATE.1 : Exact horizontal width of GATE = 14 nm")
+  # ICV flags every gap other than 28 nm inside the GATE layer extent (open
+  # row ends are not violations). This port is narrower on purpose: it checks
+  # horizontal gaps between GATE shapes below 500 nm only. Larger gaps and
+  # vertical gaps inside the GATE extent are not checked.
   gate.space(28.nm, projection).with_angle(90).output("GATE.2", "GATE.2 : Exact horizontal spacing of GATE = 28 nm")
   gate.drc(28.nm < space(projection) < 500.nm).with_angle(90).output("GATE.2", "GATE.2 : Exact horizontal spacing of GATE = 28 nm")
-  gate.dup.raw.non_rectangles.output("GATE.4", "GATE.4 : GATE must not bend")
+  gate.non_rectangles.output("GATE.4", "GATE.4 : GATE must not bend")
 
-  dummy.drc(width(projection) != 14.nm).with_angle(90).output("DUMMY.1", "DUMMY.1 : Exact horizontal width of DUMMY = 14 nm")
+  exact_size(dummy, 14.nm, 90).output("DUMMY.1", "DUMMY.1 : Exact horizontal width of DUMMY = 14 nm")
   dummy.not_overlapping(gate).output("DUMMY.2", "DUMMY.2 : DUMMY may not exist without GATE")
-  dummy.dup.raw.non_rectangles.output("DUMMY.3", "DUMMY.3 : DUMMY may not bend")
+  dummy.non_rectangles.output("DUMMY.3", "DUMMY.3 : DUMMY may not bend")
   dummy.not_inside(gate).output("DUMMY.4", "DUMMY.4 : DUMMY should exactly overlap GATE in the horizontal direction")
 
   gcut.width(10.nm, projection).with_angle(0).output("GCUT.1", "GCUT.1 : GCUT vertical width >= 10 nm")
   gcut.width(42.nm, projection).with_angle(90).output("GCUT.2", "GCUT.2 : GCUT horizontal length >= 42 nm")
-  gcut.dup.raw.non_rectangles.output("GCUT.5", "GCUT.5 : GCUT may not bend")
+  gcut.non_rectangles.output("GCUT.5", "GCUT.5 : GCUT may not bend")
   gcut.not_overlapping(gate).output("GCUT.6", "GCUT.6 : GCUT may not exist without GATE")
-  gcut.edges.with_angle(90).interacting((gate - dummy).edges.with_angle(90)).output("GCUT.7", "GCUT.7 : GCUT vertical edge may not lie inside or coincide with GATE vertical edge")
+  gcut.edges.with_angle(90).interacting(gate - dummy).output("GCUT.7", "GCUT.7 : GCUT vertical edge may not lie inside or coincide with GATE vertical edge")
   gcut.interacting(act).output("GCUT.8", "GCUT.8 : GCUT may not interact with ACT")
   gcut.separation(act, 10.nm, projection).with_angle(0).output("GCUT.ACT.1", "GCUT.ACT.1 : Vertical spacing between GCUT and ACT >= 10 nm")
 
@@ -208,50 +233,50 @@ if full_mode
   svt.overlapping(hvt + sramvt).output("VT_OVERLAP.1", "VT_OVERLAP.1 : VT layers should not overlap")
   hvt.overlapping(sramvt).output("VT_OVERLAP.1", "VT_OVERLAP.1 : VT layers should not overlap")
 
-  sdcon.drc(width(projection) != 16.nm).with_angle(90).output("SDCON.1", "SDCON.1 : Horizontal width of SDCON = 16 nm")
+  exact_size(sdcon, 16.nm, 90).output("SDCON.1", "SDCON.1 : Horizontal width of SDCON = 16 nm")
   if use_nets
     sdcon.nets.space(20.nm, projection, props_ne).with_angle(0).output("SDCON.2", "SDCON.2 : Vertical spacing between different-net SDCON >= 20 nm")
   else
     sdcon.space(20.nm, projection).with_angle(0).output("SDCON.2", "SDCON.2 : Vertical spacing between SDCON >= 20 nm")
   end
-  sdcon.dup.raw.non_rectangles.output("SDCON.3", "SDCON.3 : SDCON may not bend")
+  sdcon.non_rectangles.output("SDCON.3", "SDCON.3 : SDCON may not bend")
   sdcon.enclosing(act, 5.nm, projection).with_angle(0).output("SDCON.ACT.1", "SDCON.ACT.1 : Vertical extension of SDCON past ACT >= 5 nm")
   sdcon.separation(gate, 6.nm, projection).with_angle(90).output("SDCON.GATE.1", "SDCON.GATE.1 : Horizontal spacing between SDCON and GATE >= 6 nm")
 
-  vsd.drc(width(projection) != 13.nm).with_angle(90).output("VSD.1", "VSD.1 : Horizontal width of VSD = 13 nm")
-  vsd.drc(width(projection) != 12.nm).with_angle(0).output("VSD.2", "VSD.2 : Vertical width of VSD = 12 nm")
-  vsd.dup.raw.non_rectangles.output("VSD.3", "VSD.3 : VSD must be rectangular")
+  exact_size(vsd, 13.nm, 90).output("VSD.1", "VSD.1 : Horizontal width of VSD = 13 nm")
+  exact_size(vsd, 12.nm, 0).output("VSD.2", "VSD.2 : Vertical width of VSD = 12 nm")
+  vsd.non_rectangles.output("VSD.3", "VSD.3 : VSD must be rectangular")
   vsd.not_inside(sdcon).output("VSD.4", "VSD.4 : VSD must not be outside of SDCON")
   vsd.not_inside(m0).output("VSD.5", "VSD.5 : VSD must not be outside of M0")
   sdcon.enclosing(vsd, 1.nm, projection).with_angle(90).output("VSD.SDCON.1", "VSD.SDCON.1 : VSD enclosure by SDCON in horizontal direction >= 1 nm")
   m0.enclosing(vsd, 4.nm, projection).with_angle(90).output("VSD.M0.1", "VSD.M0.1 : VSD enclosure by M0 in horizontal direction >= 4 nm")
 
-  vg.drc(width(projection) != 14.nm).with_angle(90).output("VG.1", "VG.1 : Exact horizontal width of VG = 14 nm")
-  vg.drc(width(projection) != 12.nm).with_angle(0).output("VG.2", "VG.2 : Exact vertical width of VG = 12 nm")
+  exact_size(vg, 14.nm, 90).output("VG.1", "VG.1 : Exact horizontal width of VG = 14 nm")
+  exact_size(vg, 12.nm, 0).output("VG.2", "VG.2 : Exact vertical width of VG = 12 nm")
   vg.interacting(gcut + dummy).output("VG.3", "VG.3 : VG must not interact with GCUT or DUMMY")
   vg.not_overlapping(gate).output("VG.4", "VG.4 : VG may not exist without GATE")
   vg.not_inside(gate).output("VG.5", "VG.5 : VG must completely lie inside GATE")
-  vg.dup.raw.non_rectangles.output("VG.7", "VG.7 : VG must be rectangle")
+  vg.non_rectangles.output("VG.7", "VG.7 : VG must be rectangle")
   vg.not_inside(m0).output("VG.M0.1", "VG.M0.1 : VG must completely lie inside M0")
   m0.enclosing(vg, 4.nm, projection).with_angle(90).output("VG.M0.2", "VG.M0.2 : VG enclosure by M0 in horizontal direction >= 4 nm")
   vg.separation(act, 6.nm, euclidian).with_angle(0).output("VG.ACT.1", "VG.ACT.1 : VG and ACT vertical spacing >= 6 nm")
 
   ### M0 and V0 are standard-cell/local layers in normal FSPDN route mode.
-  m0.drc(width(projection) != 12.nm).with_angle(0).output("M0.1", "M0.1 : Exact vertical width of M0 = 12 nm")
+  exact_size(m0, 12.nm, 0).output("M0.1", "M0.1 : Exact vertical width of M0 = 12 nm")
   m0.width(24.nm, projection).with_angle(90).output("M0.2", "M0.2 : Minimum horizontal width of M0 >= 24 nm")
   m0.space(12.nm, euclidian).with_angle(0).output("M0.3", "M0.3 : Minimum vertical spacing of M0 >= 12 nm")
   m0.space(17.nm, projection).with_angle(90).output("M0.4", "M0.4 : Minimum horizontal same-track spacing of M0 >= 17 nm")
-  m0.space(15.nm, euclidian).with_internal_angle(90).output("M0.5", "M0.5 : M0 corner-to-corner spacing >= 15 nm")
-  m0.dup.raw.non_rectangles.output("M0.6", "M0.6 : M0 must not bend")
+  m0.space(15.nm, euclidian, projecting < 1.dbu).output("M0.5", "M0.5 : M0 corner-to-corner spacing >= 15 nm")
+  m0.non_rectangles.output("M0.6", "M0.6 : M0 must not bend")
 
-  v0.drc(width(projection) != 14.nm).with_angle(90).output("V0.1", "V0.1 : Exact horizontal width of V0 = 14 nm")
-  v0.drc(width(projection) != 12.nm).with_angle(0).output("V0.2", "V0.2 : Exact vertical width of V0 = 12 nm")
-  v0.dup.raw.non_rectangles.output("V0.3", "V0.3 : V0 must be rectangle")
+  exact_size(v0, 14.nm, 90).output("V0.1", "V0.1 : Exact horizontal width of V0 = 14 nm")
+  exact_size(v0, 12.nm, 0).output("V0.2", "V0.2 : Exact vertical width of V0 = 12 nm")
+  v0.non_rectangles.output("V0.3", "V0.3 : V0 must be rectangle")
   v0.not_inside(m0).output("V0.4", "V0.4 : V0 must not be outside M0")
   v0.not_inside(m1).output("V0.5", "V0.5 : V0 must not be outside M1")
-  v0.space(18.nm, euclidian).with_internal_angle(90).output("V0.6", "V0.6 : V0 corner-to-corner spacing >= 18 nm")
-  v0.not_interacting(m1.enclosing(v0, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V0.7", "V0.7 : Vertical edges of V0 should align with M1")
-  v0.not_interacting(m0.enclosing(v0, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V0.8", "V0.8 : Horizontal edges of V0 should align with M0")
+  v0.space(18.nm, euclidian, projecting < 1.dbu).output("V0.6", "V0.6 : V0 corner-to-corner spacing >= 18 nm")
+  misaligned(v0, m1, 90).output("V0.7", "V0.7 : Vertical edges of V0 should align with M1")
+  misaligned(v0, m0, 0).output("V0.8", "V0.8 : Horizontal edges of V0 should align with M0")
   m0.enclosing(v0, 4.nm, projection).with_angle(90).output("V0.M0.1", "V0.M0.1 : V0 enclosure by M0 in horizontal direction >= 4 nm")
   m1.enclosing(v0, 4.nm, projection).with_angle(0).output("V0.M1.1", "V0.M1.1 : V0 enclosure by M1 in vertical direction >= 4 nm")
 end
@@ -261,52 +286,54 @@ m1.width(14.nm, projection).with_angle(90).output("M1.1", "M1.1 : Horizontal wid
 m1.width(28.nm, projection).with_angle(0).output("M1.2", "M1.2 : Vertical length of M1 >= 28 nm")
 m1.space(14.nm, projection).with_angle(90).output("M1.3", "M1.3 : Horizontal spacing between M1 layers >= 14 nm")
 m1.space(20.nm, projection).with_angle(0).output("M1.4", "M1.4 : Vertical same-track spacing between M1 layers >= 20 nm")
-m1.space(16.nm, euclidian).with_internal_angle(90).output("M1.5", "M1.5 : M1 corner-to-corner spacing >= 16 nm")
-m1.dup.raw.non_rectangles.output("M1.6", "M1.6 : M1 must not bend")
+m1.space(16.nm, euclidian, projecting < 1.dbu).output("M1.5", "M1.5 : M1 corner-to-corner spacing >= 16 nm")
+m1.non_rectangles.output("M1.6", "M1.6 : M1 must not bend")
 
 m2.width(12.nm, projection).with_angle(0).output("M2.1", "M2.1 : Vertical width of M2 >= 12 nm")
 m2.width(24.nm, projection).with_angle(90).output("M2.2", "M2.2 : Horizontal length of M2 >= 24 nm")
 m2.space(12.nm, projection).with_angle(0).output("M2.3", "M2.3 : Vertical spacing between M2 layers >= 12 nm")
 m2.space(17.nm, projection).with_angle(90).output("M2.4", "M2.4 : Horizontal same-track spacing between M2 layers >= 17 nm")
-m2.space(15.nm, euclidian).with_internal_angle(90).output("M2.5", "M2.5 : M2 corner-to-corner spacing >= 15 nm")
-m2.dup.raw.non_rectangles.output("M2.6", "M2.6 : M2 must not bend")
+m2.space(15.nm, euclidian, projecting < 1.dbu).output("M2.5", "M2.5 : M2 corner-to-corner spacing >= 15 nm")
+m2.non_rectangles.output("M2.6", "M2.6 : M2 must not bend")
 
 m3.width(14.nm, projection).with_angle(90).output("M3.1", "M3.1 : Horizontal width of M3 >= 14 nm")
 m3.width(28.nm, projection).with_angle(0).output("M3.2", "M3.2 : Vertical length of M3 >= 28 nm")
 m3.space(14.nm, projection).with_angle(90).output("M3.3", "M3.3 : Horizontal spacing between M3 layers >= 14 nm")
 m3.space(20.nm, projection).with_angle(0).output("M3.4", "M3.4 : Vertical same-track spacing between M3 layers >= 20 nm")
-m3.space(16.nm, euclidian).with_internal_angle(90).output("M3.5", "M3.5 : M3 corner-to-corner spacing >= 16 nm")
-m3.dup.raw.non_rectangles.output("M3.6", "M3.6 : M3 must not bend")
+m3.space(16.nm, euclidian, projecting < 1.dbu).output("M3.5", "M3.5 : M3 corner-to-corner spacing >= 16 nm")
+m3.non_rectangles.output("M3.6", "M3.6 : M3 must not bend")
 
 m4.width(21.nm, projection).with_angle(0).output("M4.1", "M4.1 : Vertical width of M4 >= 21 nm")
 m4.width(42.nm, projection).with_angle(90).output("M4.2", "M4.2 : Horizontal length of M4 >= 42 nm")
 m4.space(21.nm, projection).with_angle(0).output("M4.3", "M4.3 : Vertical spacing between M4 layers >= 21 nm")
 m4.space(30.nm, projection).with_angle(90).output("M4.4", "M4.4 : Horizontal same-track spacing between M4 layers >= 30 nm")
-m4.space(24.nm, euclidian).with_internal_angle(90).output("M4.5", "M4.5 : M4 corner-to-corner spacing >= 24 nm")
-m4.dup.raw.non_rectangles.output("M4.6", "M4.6 : M4 must not bend")
+m4.space(24.nm, euclidian, projecting < 1.dbu).output("M4.5", "M4.5 : M4 corner-to-corner spacing >= 24 nm")
+m4.non_rectangles.output("M4.6", "M4.6 : M4 must not bend")
 
 m5.width(21.nm, projection).with_angle(90).output("M5.1", "M5.1 : Horizontal width of M5 >= 21 nm")
 m5.width(42.nm, projection).with_angle(0).output("M5.2", "M5.2 : Vertical length of M5 >= 42 nm")
 m5.space(21.nm, projection).with_angle(90).output("M5.3", "M5.3 : Horizontal spacing between M5 layers >= 21 nm")
 m5.space(30.nm, projection).with_angle(0).output("M5.4", "M5.4 : Vertical same-track spacing between M5 layers >= 30 nm")
-m5.space(24.nm, euclidian).with_internal_angle(90).output("M5.5", "M5.5 : M5 corner-to-corner spacing >= 24 nm")
-m5.dup.raw.non_rectangles.output("M5.6", "M5.6 : M5 must not bend")
+m5.space(24.nm, euclidian, projecting < 1.dbu).output("M5.5", "M5.5 : M5 corner-to-corner spacing >= 24 nm")
+m5.non_rectangles.output("M5.6", "M5.6 : M5 must not bend")
 
 m6.width(38.nm, projection).with_angle(0).output("M6.1", "M6.1 : Vertical width of M6 >= 38 nm")
 m6.width(55.nm, projection).with_angle(90).output("M6.2", "M6.2 : Horizontal length of M6 >= 55 nm")
 m6.space(38.nm, projection).with_angle(0).output("M6.3", "M6.3 : Vertical spacing between M6 layers >= 38 nm")
 m6.space(55.nm, projection).with_angle(90).output("M6.4", "M6.4 : Horizontal same-track spacing between M6 layers >= 55 nm")
-m6.space(45.nm, euclidian).with_internal_angle(90).output("M6.5", "M6.5 : M6 corner-to-corner spacing >= 45 nm")
-m6.dup.raw.non_rectangles.output("M6.6", "M6.6 : M6 must not bend")
+m6.space(45.nm, euclidian, projecting < 1.dbu).output("M6.5", "M6.5 : M6 corner-to-corner spacing >= 45 nm")
+m6.non_rectangles.output("M6.6", "M6.6 : M6 must not bend")
 
-### V1 through V5 route vias. Exact edge alignment is written in ASAP7-like
-### KLayout form: the via must interact with the relevant metal edge-pair that
-### encloses the via, instead of using a custom not_inside_touching_edge port.
+### V1 through V5 route vias. Vx.3/Vx.4 (ICV not_inside_touching_edge): every
+### part of the via's vertical edges must lie on an edge of the vertical metal
+### (M1/M3/M5) and every part of its horizontal edges on an edge of the
+### horizontal metal (M2/M4/M6), with the via inside that metal. A via that
+### lands only partly on either metal fails.
 v1.width(14.nm, projection).with_angle(90).output("V1.1", "V1.1 : Horizontal width of V1 >= 14 nm")
 v1.width(12.nm, projection).with_angle(0).output("V1.2", "V1.2 : Vertical height of V1 >= 12 nm")
-v1.not_interacting(m1.enclosing(v1, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V1.3", "V1.3 : Vertical edges of V1 should align with M1")
-v1.not_interacting(m2.enclosing(v1, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V1.4", "V1.4 : Horizontal edges of V1 should align with M2")
-v1.space(18.nm, euclidian).with_internal_angle(90).output("V1.6", "V1.6 : V1 corner-to-corner spacing >= 18 nm")
+misaligned(v1, m1, 90).output("V1.3", "V1.3 : Vertical edges of V1 should align with M1")
+misaligned(v1, m2, 0).output("V1.4", "V1.4 : Horizontal edges of V1 should align with M2")
+v1.space(18.nm, euclidian, projecting < 1.dbu).output("V1.6", "V1.6 : V1 corner-to-corner spacing >= 18 nm")
 v1.not_overlapping(m1).output("V1.7", "V1.7 : V1 must interact with M1")
 v1.not_overlapping(m2).output("V1.8", "V1.8 : V1 must interact with M2")
 m1.enclosing(v1, 4.nm, projection).with_angle(0).output("V1.M1.EN", "V1.M1.EN : V1 enclosure by M1 in vertical direction >= 4 nm")
@@ -314,9 +341,9 @@ m2.enclosing(v1, 4.nm, projection).with_angle(90).output("V1.M2.EN", "V1.M2.EN :
 
 v2.width(14.nm, projection).with_angle(90).output("V2.1", "V2.1 : Horizontal width of V2 >= 14 nm")
 v2.width(12.nm, projection).with_angle(0).output("V2.2", "V2.2 : Vertical height of V2 >= 12 nm")
-v2.not_interacting(m3.enclosing(v2, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V2.3", "V2.3 : Vertical edges of V2 should align with M3")
-v2.not_interacting(m2.enclosing(v2, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V2.4", "V2.4 : Horizontal edges of V2 should align with M2")
-v2.space(18.nm, euclidian).with_internal_angle(90).output("V2.6", "V2.6 : V2 corner-to-corner spacing >= 18 nm")
+misaligned(v2, m3, 90).output("V2.3", "V2.3 : Vertical edges of V2 should align with M3")
+misaligned(v2, m2, 0).output("V2.4", "V2.4 : Horizontal edges of V2 should align with M2")
+v2.space(18.nm, euclidian, projecting < 1.dbu).output("V2.6", "V2.6 : V2 corner-to-corner spacing >= 18 nm")
 v2.not_overlapping(m2).output("V2.7", "V2.7 : V2 must interact with M2")
 v2.not_overlapping(m3).output("V2.8", "V2.8 : V2 must interact with M3")
 m2.enclosing(v2, 4.nm, projection).with_angle(90).output("V2.M2.EN", "V2.M2.EN : V2 enclosure by M2 in horizontal direction >= 4 nm")
@@ -324,9 +351,9 @@ m3.enclosing(v2, 4.nm, projection).with_angle(0).output("V2.M3.EN", "V2.M3.EN : 
 
 v3.width(14.nm, projection).with_angle(90).output("V3.1", "V3.1 : Horizontal width of V3 >= 14 nm")
 v3.width(21.nm, projection).with_angle(0).output("V3.2", "V3.2 : Vertical height of V3 >= 21 nm")
-v3.not_interacting(m3.enclosing(v3, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V3.3", "V3.3 : Vertical edges of V3 should align with M3")
-v3.not_interacting(m4.enclosing(v3, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V3.4", "V3.4 : Horizontal edges of V3 should align with M4")
-v3.space(18.nm, euclidian).with_internal_angle(90).output("V3.6", "V3.6 : V3 corner-to-corner spacing >= 18 nm")
+misaligned(v3, m3, 90).output("V3.3", "V3.3 : Vertical edges of V3 should align with M3")
+misaligned(v3, m4, 0).output("V3.4", "V3.4 : Horizontal edges of V3 should align with M4")
+v3.space(18.nm, euclidian, projecting < 1.dbu).output("V3.6", "V3.6 : V3 corner-to-corner spacing >= 18 nm")
 v3.not_overlapping(m3).output("V3.7", "V3.7 : V3 must interact with M3")
 v3.not_overlapping(m4).output("V3.8", "V3.8 : V3 must interact with M4")
 m3.enclosing(v3, 4.nm, projection).with_angle(0).output("V3.M3.EN", "V3.M3.EN : V3 enclosure by M3 in vertical direction >= 4 nm")
@@ -334,9 +361,9 @@ m4.enclosing(v3, 4.nm, projection).with_angle(90).output("V3.M4.EN", "V3.M4.EN :
 
 v4.width(21.nm, projection).with_angle(90).output("V4.1", "V4.1 : Horizontal width of V4 >= 21 nm")
 v4.width(21.nm, projection).with_angle(0).output("V4.2", "V4.2 : Vertical height of V4 >= 21 nm")
-v4.not_interacting(m5.enclosing(v4, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V4.3", "V4.3 : Vertical edges of V4 should align with M5")
-v4.not_interacting(m4.enclosing(v4, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V4.4", "V4.4 : Horizontal edges of V4 should align with M4")
-v4.space(27.nm, euclidian).with_internal_angle(90).output("V4.6", "V4.6 : V4 corner-to-corner spacing >= 27 nm")
+misaligned(v4, m5, 90).output("V4.3", "V4.3 : Vertical edges of V4 should align with M5")
+misaligned(v4, m4, 0).output("V4.4", "V4.4 : Horizontal edges of V4 should align with M4")
+v4.space(27.nm, euclidian, projecting < 1.dbu).output("V4.6", "V4.6 : V4 corner-to-corner spacing >= 27 nm")
 v4.not_overlapping(m4).output("V4.7", "V4.7 : V4 must interact with M4")
 v4.not_overlapping(m5).output("V4.8", "V4.8 : V4 must interact with M5")
 m4.enclosing(v4, 5.nm, projection).with_angle(90).output("V4.M4.EN", "V4.M4.EN : V4 enclosure by M4 in horizontal direction >= 5 nm")
@@ -344,26 +371,28 @@ m5.enclosing(v4, 5.nm, projection).with_angle(0).output("V4.M5.EN", "V4.M5.EN : 
 
 v5.width(21.nm, projection).with_angle(90).output("V5.1", "V5.1 : Horizontal width of V5 >= 21 nm")
 v5.width(38.nm, projection).with_angle(0).output("V5.2", "V5.2 : Vertical height of V5 >= 38 nm")
-v5.not_interacting(m5.enclosing(v5, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V5.3", "V5.3 : Vertical edges of V5 should align with M5")
-v5.not_interacting(m6.enclosing(v5, 1.dbu, projection, two_opposite_sides_allowed).edges).output("V5.4", "V5.4 : Horizontal edges of V5 should align with M6")
-v5.space(27.nm, euclidian).with_internal_angle(90).output("V5.6", "V5.6 : V5 corner-to-corner spacing >= 27 nm")
+misaligned(v5, m5, 90).output("V5.3", "V5.3 : Vertical edges of V5 should align with M5")
+misaligned(v5, m6, 0).output("V5.4", "V5.4 : Horizontal edges of V5 should align with M6")
+v5.space(27.nm, euclidian, projecting < 1.dbu).output("V5.6", "V5.6 : V5 corner-to-corner spacing >= 27 nm")
 v5.not_overlapping(m5).output("V5.7", "V5.7 : V5 must interact with M5")
 v5.not_overlapping(m6).output("V5.8", "V5.8 : V5 must interact with M6")
 m5.enclosing(v5, 6.nm, projection).with_angle(0).output("V5.M5.EN", "V5.M5.EN : V5 enclosure by M5 in vertical direction >= 6 nm")
 m6.enclosing(v5, 6.nm, projection).with_angle(90).output("V5.M6.EN", "V5.M6.EN : V5 enclosure by M6 in horizontal direction >= 6 nm")
 
 ### Upper frontside and backside stacks (tech LEF). The ICV runset stops at
-### M6/V5; these minimum width/spacing checks mirror gt2_tech.lef so that PDN
-### and upper-level routing written by OpenROAD is covered as well.
+### M6/V5; these checks mirror gt2_tech.lef so that PDN and upper-level routing
+### written by OpenROAD is covered as well: LEF WIDTH is a minimum width in
+### every direction, LEF SPACING is euclidian (corner-to-corner included), and
+### "ENCLOSURE BELOW/ABOVE e 0" (V6..V8) needs e on both sides of either axis.
 [
-  [m7,  "M7",  38, 38, 90], [m8,  "M8",  38, 38, 0], [m9,  "M9",  38, 38, 90],
-  [m10, "M10", 56, 56, 0],  [m11, "M11", 56, 56, 90], [m12, "M12", 360, 360, 0],
-  [m13, "M13", 360, 360, 90], [rdl, "RDL", 1600, 1600, 0],
-  [bm1, "BM1", 56, 56, 90], [bm2, "BM2", 56, 56, 0], [bm3, "BM3", 360, 360, 90],
-  [bm4, "BM4", 360, 360, 0], [brdl, "BRDL", 1600, 1600, 90]
-].each do |layer, name, w, s, width_angle|
-  layer.width(w.nm, projection).with_angle(width_angle).output("#{name}.W", "#{name}.W : Minimum width of #{name} >= #{w} nm (tech LEF)")
-  layer.space(s.nm, projection).output("#{name}.S", "#{name}.S : Minimum spacing of #{name} >= #{s} nm (tech LEF)")
+  [m7,  "M7",  38, 38], [m8,  "M8",  38, 38], [m9,  "M9",  38, 38],
+  [m10, "M10", 56, 56], [m11, "M11", 56, 56], [m12, "M12", 360, 360],
+  [m13, "M13", 360, 360], [rdl, "RDL", 1600, 1600],
+  [bm1, "BM1", 56, 56], [bm2, "BM2", 56, 56], [bm3, "BM3", 360, 360],
+  [bm4, "BM4", 360, 360], [brdl, "BRDL", 1600, 1600]
+].each do |layer, name, w, s|
+  layer.width(w.nm, projection).output("#{name}.W", "#{name}.W : Minimum width of #{name} >= #{w} nm (tech LEF)")
+  layer.space(s.nm, euclidian).output("#{name}.S", "#{name}.S : Minimum spacing of #{name} >= #{s} nm (tech LEF)")
 end
 [
   [v6, "V6", 38, 38], [v7, "V7", 38, 38], [v8, "V8", 38, 38], [v9, "V9", 38, 38],
@@ -372,16 +401,35 @@ end
   [bv4, "BV4", 56, 56]
 ].each do |via, name, w, s|
   via.width(w.nm, projection).output("#{name}.W", "#{name}.W : Minimum width of #{name} >= #{w} nm (tech LEF)")
-  via.space(s.nm, projection).output("#{name}.S", "#{name}.S : Minimum spacing of #{name} >= #{s} nm (tech LEF)")
+  via.space(s.nm, euclidian).output("#{name}.S", "#{name}.S : Minimum spacing of #{name} >= #{s} nm (tech LEF)")
 end
 [
-  [v6, m6, m7, "V6"], [v7, m7, m8, "V7"], [v8, m8, m9, "V8"], [v9, m9, m10, "V9"],
+  [v6, m6, m7, "V6", 8], [v7, m7, m8, "V7", 8], [v8, m8, m9, "V8", 8], [v9, m9, m10, "V9"],
   [v10, m10, m11, "V10"], [v11, m11, m12, "V11"], [v12, m12, m13, "V12"], [v13, m13, rdl, "V13"],
   [bv0, bpr, bm1, "BV0"], [bv1, bm1, bm2, "BV1"], [bv2, bm2, bm3, "BV2"], [bv3, bm3, bm4, "BV3"],
   [bv4, bm4, brdl, "BV4"]
-].each do |via, below, above, name|
+].each do |via, below, above, name, enc|
   via.not_inside(below).output("#{name}.EN1", "#{name}.EN1 : #{name} must be covered by the metal below")
   via.not_inside(above).output("#{name}.EN2", "#{name}.EN2 : #{name} must be covered by the metal above")
+  next unless enc
+  # A via fails when the metal is closer than enc to it on one side of each axis.
+  [[below, "EN3", "below"], [above, "EN4", "above"]].each do |metal, rule, side|
+    short = metal.enclosing(via, enc.nm, projection)
+    via.interacting(short.with_angle(0).second_edges).interacting(short.with_angle(90).second_edges).output(
+      "#{name}.#{rule}", "#{name}.#{rule} : #{name} enclosure by the metal #{side} >= #{enc} nm on both sides of one axis (tech LEF)")
+  end
+end
+
+### Manufacturing grid. The device layers are checked in full mode only.
+grid_layers = [m1, v1, m2, v2, m3, v3, m4, v4, m5, v5, m6, v6, m7, v7, m8, v8, m9, v9,
+               m10, v10, m11, v11, m12, v12, m13, v13, rdl,
+               bv0, bm1, bv1, bm2, bv2, bm3, bv3, bm4, bv4, brdl]
+if full_mode
+  grid_layers += [nwell, act, gate, dummy, gcut, nsel, psel, bpr, vbpr, sdcon, vsd, vg,
+                  m0, v0, elvt, ulvt, svt, hvt, sramvt]
+end
+grid_layers.each do |layer|
+  layer.ongrid(0.5.nm).output("GRID.1", "GRID.1 : Vertices must lie on the 0.5 nm manufacturing grid")
 end
 
 ]]></text>

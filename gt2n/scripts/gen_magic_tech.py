@@ -4,14 +4,23 @@
 
 Writes libs.tech/magic/{gt2n.tech, gt2n.magicrc, gt2n.tcl}.
 
-Scope: this is a *layout-level* technology. All GT2N front-end and
-frontside GDS layers are represented (so cell and frontside-PDN layouts
-round-trip through Magic), the metal/via stack is connected for net tracing
-and abstract extraction, and the routing layers carry the minimum
-width/spacing rules of the tech LEF. The backside stack (BM1-BM4, BRDL,
-BV0-BV4 on GDS layers 910-1000) is omitted because Magic only supports GDS
-layer numbers up to 255; use KLayout for backside-PDN layouts. Nanosheet device extraction is NOT modelled; transistor-level
-LVS of GT2N layouts is done with the KLayout deck (libs.tech/klayout).
+Scope: this is a *layout-level* technology. Every GT2N front-end and
+frontside layer is read on its drawing datatype, the routing layers also on
+their pin (251) and label (20) datatypes, and the cell boundary on 235/250,
+so cell and frontside-PDN layouts round-trip through Magic. Other datatypes
+(the FEOL and via pin/label purposes, prBoundary 235/0) are not read. Port
+labels of the routing layers are written on the pin datatype, all other
+labels and the label datatype geometry on the drawing datatype. The
+metal/via stack is connected for net tracing and abstract extraction (cuts
+that abut on a shared conductor connect), GATE under GCUT or DUMMY does not
+conduct, every routing layer has an obstruction type for LEF OBS (also used
+for OBS on the cut layers; abstract views written with 'lef write -hide'),
+and the routing layers carry the minimum width/spacing rules of the tech LEF.
+The backside stack (BM1-BM4, BRDL, BV0-BV4 on GDS layers 910-1000) is
+omitted because Magic only supports GDS layer numbers up to 255; use KLayout
+for backside-PDN layouts. Nanosheet device extraction is
+NOT modelled; transistor-level LVS of GT2N layouts is done with the KLayout
+deck (libs.tech/klayout).
 
 Internal unit: 1 Magic unit = 0.5 nm (the GT2N manufacturing grid).
 
@@ -84,6 +93,12 @@ VIAS = [
     ("v13", 87, "m13", "rdl", "V13", 56),
 ]
 
+# GATE under GCUT or DUMMY does not conduct (legacy and KLayout LVS:
+# gPOLY = GATE - GCUT - DUMMY). Magic reads it as this non-connecting type on
+# the gate plane and writes it back to GATE: (magic type, display style).
+GATE_CUT = ("gcutgate", "poly_resist_stripes")
+GATE_CUTTERS = ("gcut", "dummy")
+
 PIN_DT = 251
 LABEL_DT = 20
 BOUNDARY = (235, 250)
@@ -92,6 +107,11 @@ BOUNDARY = (235, 250)
 def u(nm):
     """nm -> Magic internal units (0.5 nm)."""
     return int(round(nm * 2))
+
+
+def with_cuts(t):
+    """Type t and every cut that lands on it."""
+    return [t] + [v for v, _, lo, hi, _, _ in VIAS if t in (lo, hi)]
 
 
 def tech_text():
@@ -116,12 +136,16 @@ def tech_text():
     w("types")
     for t, _, p, _, _ in FEOL:
         w(f"  {p} {t}")
+    w(f"  gate {GATE_CUT[0]}")
     for t, _, p, *_ in METALS:
         w(f"  {p} {t}")
     plane_of = {t: p for t, _, p, _, _ in FEOL}
     plane_of.update({m[0]: m[2] for m in METALS})
     for v, _, lo, hi, _, _ in VIAS:
         w(f"  {plane_of[lo]} {v}")
+    # Obstructions (LEF OBS) of the routing layers; they connect to nothing.
+    for t, _, p, *_ in METALS:
+        w(f"  {p} obs{t}")
     w("  comment boundary")
     w("end\n")
 
@@ -139,28 +163,40 @@ def tech_text():
     w("styles\n  styletype mos")
     for t, _, _, style, _ in FEOL:
         w(f"  {t} {style}")
+    w(f"  {GATE_CUT[0]} {GATE_CUT[1]}")
     for t, _, _, style, *_ in METALS:
         w(f"  {t} {style}")
     for v, *_ in VIAS:
         w(f"  {v} via1")
+    for t, _, _, style, *_ in METALS:
+        w(f"  obs{t} obs{style}")
     w("  boundary subcircuit")
     w("end\n")
 
-    w("compose\nend\n")
+    # Painting an obstruction over routing metal keeps the metal, so a LEF OBS
+    # that overlaps a PIN of the same layer does not erase the pin.
+    w("compose")
+    for t, *_ in METALS:
+        w(f"  paint {t} obs{t} {t}")
+    w("end\n")
 
+    # One group per conductor (the conductor and its cuts), so that two
+    # different cuts abutting on a shared conductor (e.g. V1 next to V2 on M2,
+    # with no plain M2 between them) connect too.
     w("connect")
-    for v, _, lo, hi, _, _ in VIAS:
-        w(f"  {v} {lo},{hi}")
+    for t in ["sdcon", "gate"] + [m[0] for m in METALS]:
+        grp = ",".join(with_cuts(t))
+        w(f"  {grp} {grp}")
     w("end\n")
 
     w("cifoutput")
     w("style gds\n  scalefactor 5 angstroms\n  units angstroms\n  options calma-permissive-labels")
     for t, layer, _, _, name in FEOL:
-        types = [t] + [v for v, _, lo, hi, _, _ in VIAS if t in (lo, hi)]
+        types = with_cuts(t) + ([GATE_CUT[0]] if t == "gate" else [])
         w(f"  layer {name} {','.join(types)}\n    labels {t}\n    calma {layer} 0")
+    # Port labels (pins) go to the pin datatype, all other labels to drawing.
     for t, layer, _, _, name, *_ in METALS:
-        types = [t] + [v for v, _, lo, hi, _, _ in VIAS if t in (lo, hi)]
-        w(f"  layer {name} {','.join(types)}\n    labels {t}\n    calma {layer} 0")
+        w(f"  layer {name} {','.join(with_cuts(t))}\n    labels {t} noport\n    calma {layer} 0")
         w(f"  layer {name}P\n    labels {t} port\n    calma {layer} {PIN_DT}")
     for v, layer, _, _, name, _ in VIAS:
         w(f"  layer {name} {v}\n    calma {layer} 0")
@@ -169,8 +205,13 @@ def tech_text():
 
     w("cifinput")
     w("style gds\n  scalefactor 5 angstroms")
+    cutters = ",".join(f[4] for f in FEOL if f[0] in GATE_CUTTERS)
     for t, layer, _, _, name in FEOL:
-        w(f"  layer {t} {name}\n    labels {name}\n    calma {name} {layer} 0")
+        if t == "gate":
+            w(f"  layer {t} {name}\n    and-not {cutters}\n    labels {name}\n    calma {name} {layer} 0")
+            w(f"  layer {GATE_CUT[0]} {name}\n    and {cutters}")
+        else:
+            w(f"  layer {t} {name}\n    labels {name}\n    calma {name} {layer} 0")
     for t, layer, _, _, name, *_ in METALS:
         w(f"  layer {t} {name}\n    labels {name}\n    calma {name} {layer} 0")
         w(f"  layer {t} {name}P\n    labels {name}P port\n    calma {name}P {layer} {PIN_DT}")
@@ -182,11 +223,14 @@ def tech_text():
 
 
     w("drc")
-    w("  # Minimum width / spacing of the routing stack (tech LEF values).")
+    w("  # Minimum width / spacing of the routing stack (tech LEF values). The")
+    w("  # same spacing applies to LEF obstructions, which must not be touched.")
     for t, _, _, _, name, width, space in METALS:
-        types = ",".join([t] + [v for v, _, lo, hi, _, _ in VIAS if t in (lo, hi)])
+        types = ",".join(with_cuts(t))
         w(f"  width {types} {u(width)} \"{name} width < {width} nm\"")
         w(f"  spacing {types} {types} {u(space)} touching_ok \"{name} spacing < {space} nm\"")
+        w(f"  spacing {types} obs{t} {u(space)} touching_illegal "
+          f"\"{name} spacing to obstruction < {space} nm\"")
     w("end\n")
 
     w("extract")
@@ -201,8 +245,16 @@ def tech_text():
     w("lef")
     for t, *_rest in METALS:
         w(f"  routing {t} {_rest[3]}")
+    # LEF OBS geometry is read into, and 'lef write -hide' writes, these types.
+    for t, *_rest in METALS:
+        w(f"  obs obs{t} {_rest[3]}")
     for v, _, _, _, name, _ in VIAS:
         w(f"  cut {v} {name}")
+    # A LEF OBS on a cut layer obstructs the routing layers the cut joins; it
+    # is not read as a cut (which would connect them).
+    routing = {m[0] for m in METALS}
+    for v, _, lo, hi, name, _ in VIAS:
+        w(f"  obs {','.join('obs' + t for t in (lo, hi) if t in routing)} {name}")
     w("  masterslice gate GATE")
     w("  masterslice act ACT")
     w("  masterslice nwell NW NWELL")

@@ -7,14 +7,9 @@ meta:
   version: 3
   flow: Classic
   substituting_steps:
-    # The GT2N Magic technology is layout-level only (no nanosheet device
-    # extraction), so the Magic/Netgen LVS path is disabled. Transistor-level
-    # LVS of GT2N layouts uses the KLayout deck of the PDK:
-    #   gt2n/libs.tech/klayout/tech/lvs/gt2n.lylvs
-    Magic.SpiceExtraction: null
-    Checker.IllegalOverlap: null
-    Netgen.LVS: null
-    Checker.LVS: null
+    # OpenROAD PSM sees only the tap cells (the cell supply pins are on BPR),
+    # so the IR-drop report would show 0 V / 0 W without measuring anything.
+    OpenROAD.IRDropReport: null
 
 DESIGN_NAME: gt2n_demo
 VERILOG_FILES:
@@ -29,18 +24,29 @@ CLOCK_PORT: clk
 CLOCK_PERIOD: 1.0
 
 # The GT2N Liberty files use ps/ohm; this SDC switches the command units to
-# the ns/kOhm values LibreLane passes before applying its base constraints.
+# ns and ohm (the units of the PDK LAYERS_RC/VIAS_R) before applying
+# LibreLane's base constraints.
 PNR_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 SIGNOFF_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 
-# Floorplan (um). The M2/M3 power stripes use a 6 um pitch, so keep the core
-# at least a few pitches wide.
+# Floorplan (um). With the default PDN pitches the core must be at least
+# about 12.1 um in each direction (gt2n_pdn_fspdn.tcl; GT2N_PDN_MID_*/HIGH_*
+# lower the M4..M9 pitches). Every row segment gets a tapfspdn cell at both
+# ends (ENDCAP_CELL).
 FP_SIZING: absolute
 DIE_AREA: [0, 0, 30, 30]
 # Pin access is tight: the cell M1 pins sit on a 42 nm grid and the M1 tracks
 # on 28 nm, so every other pin is half a track off-grid. At 50 % placement
 # density the detailed router of this design stops with a few violations.
 PL_TARGET_DENSITY_PCT: 35
+
+# Resizer margins (ns) scaled to GT2N cell delays (about 10 ps); the
+# LibreLane defaults (hold 0.1/0.05, setup 0.05/0.025) suit slower processes
+# and pad nearly every flip-flop path with hold buffers.
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.01
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.01
+PL_RESIZER_SETUP_SLACK_MARGIN: 0.01
+GRT_RESIZER_SETUP_SLACK_MARGIN: 0.005
 
 # I/O pins exactly one track wide: GT2N metals are RECTONLY, and the default
 # 2x-wide square pins form T-shaped (non-rectangular) unions with the
@@ -49,13 +55,7 @@ IO_PIN_V_THICKNESS_MULT: 1
 IO_PIN_H_THICKNESS_MULT: 1
 
 # Power: GT2N frontside PDN (M2..M9 mesh) plus the tap-cell to M3 hookup of
-# the buried power rails.
+# the buried power rails. The hookup stops the flow if a rail has no tap.
 VDD_NETS: [VDD]
 GND_NETS: [VSS]
 PDN_CFG: pdk_dir::libs.tech/librelane/gt2n_pdn_cfg.tcl
-
-# The standard-cell supply pins are on BPR, a MASTERSLICE layer in the
-# frontside router view, so OpenROAD PSM cannot trace them and reports every
-# cell as unconnected. Their connection through the rails and the tap cells
-# is checked by LVS instead.
-ERROR_ON_PDN_VIOLATIONS: false

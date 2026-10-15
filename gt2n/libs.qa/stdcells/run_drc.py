@@ -3,7 +3,8 @@
 """Run the GT2N KLayout DRC deck (full mode) on every standard-cell library.
 
 For each libs.ref/<lib>/gds/<lib>.gds a test layout is built with
-make_drc_testchip.py (every cell abutted by fillers) and checked with
+make_drc_testchip.py (every cell abutted by fillers, plus a small placed
+block of abutted, mirrored rows) and checked with
 libs.tech/klayout/tech/drc/gt2n.lydrc in full mode. Violations listed in
 drc_waivers.txt (known issues of the upstream cell layouts) are reported but
 do not fail the run.

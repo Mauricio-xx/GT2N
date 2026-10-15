@@ -21,7 +21,8 @@ IHP-Open-PDK's libs.ref/sg13g2_stdcell:
 only write sub-nanometre GDS with 1 A units and, when it reads cell GDS
 without rescaling (as LibreLane does), requires the same units. The copies
 in libs.ref are therefore rewritten with a 1e-10 m database unit (all
-coordinates multiplied by 5); the geometry is unchanged.
+coordinates, path widths and path extensions multiplied by 5); the
+geometry is unchanged.
 
 The cell LEF is copied unchanged except for the double-height cells
 (dffasync, mux2: vss-vdd-vss rails). Their legacy SYMMETRY X Y lets
@@ -40,7 +41,13 @@ from gt2n_common import LIBS_REF, REPO_DIR, all_libs, corners
 
 GDS_SCALE = 5            # 5e-10 m -> 1e-10 m database unit
 _GDS_UNITS = 0x0305
-_GDS_XY = 0x1003
+# Records holding 4-byte integer lengths in database units:
+# WIDTH, XY, BGNEXTN, ENDEXTN.
+_GDS_LENGTHS = (0x0F03, 0x1003, 0x3003, 0x3103)
+# Record numbers (high byte) of HEADER .. LIBSECUR that hold no lengths.
+# UNITS and the length records are handled explicitly; SPACING (0x18, a
+# length of the obsolete Calma format) and unknown records are rejected.
+_GDS_NO_LENGTH = set(range(0x3C)) - {0x03, 0x0F, 0x10, 0x18, 0x30, 0x31}
 
 
 def _gds_real8(value):
@@ -83,10 +90,12 @@ def rescale_gds(data, factor=GDS_SCALE):
             user = _gds_read_real8(record[4:12]) / factor
             meters = _gds_read_real8(record[12:20]) / factor
             record = record[:4] + _gds_real8(user) + _gds_real8(meters)
-        elif rtype == _GDS_XY:
+        elif rtype in _GDS_LENGTHS:
             count = (length - 4) // 4
             coords = struct.unpack(f">{count}i", record[4:])
             record = record[:4] + struct.pack(f">{count}i", *(c * factor for c in coords))
+        elif rtype >> 8 not in _GDS_NO_LENGTH:
+            raise ValueError(f"GDS record 0x{rtype:04X} at byte {pos} cannot be rescaled")
         out += record
         pos += length
     return bytes(out)

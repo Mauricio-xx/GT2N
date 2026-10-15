@@ -34,8 +34,10 @@ TRACKS = [
     ("M12", 0.180, 0.720), ("M13", 0.180, 0.720), ("RDL", 0.800, 3.200),
 ]
 
-# Layer RC of the frontside stack (Liberty units: ohm and pF per um), from
-# libs.tech/openroad/setRC_fspdn.tcl.
+# Layer RC of the frontside stack in ohm and pF per um (via R in ohm), from
+# libs.tech/openroad/setRC_fspdn.tcl. LibreLane passes these numbers to
+# set_layer_rc unchanged, in the command units current at that point: the
+# GT2N base SDC (gt2n_base.sdc), read just before, sets them to ohm/pF/um.
 LAYERS_RC = [
     ("M1", 4.37500e+02, 9.03127e-05), ("M2", 6.21750e+02, 9.03127e-05),
     ("M3", 4.37500e+02, 9.03127e-05), ("M4", 1.66952e+02, 9.40758e-05),
@@ -56,17 +58,17 @@ PDK_CONFIG = """\
 # LibreLane PDK configuration for GT2N (2 nm nanosheet, BSPDN).
 #
 # Select a standard-cell library (one per nanosheet width / VT flavour) with
-# STD_CELL_LIBRARY, e.g. gt2_6t_w31_svt (default). GT2N has no Magic device
-# extraction: designs must disable the Magic/Netgen steps, see
+# STD_CELL_LIBRARY, e.g. gt2_6t_w31_svt (default). See
 # libs.tech/librelane/README.md for the required design configuration.
-
-set ::env(PROCESS) 2
-set ::env(DEF_UNITS_PER_MICRON) 2000
+#
+# LibreLane's Magic.SpiceExtraction extracts the routed DEF against the LEF
+# abstracts of the cells, so the Magic/Netgen LVS path needs the via
+# connectivity of the Magic tech file (libs.tech/magic/gt2n.tech), not device
+# extraction. Transistor-level LVS uses the KLayout deck
+# (libs.tech/klayout/tech/lvs/gt2n.lylvs).
 
 set ::env(VDD_PIN) "VDD"
 set ::env(GND_PIN) "VSS"
-set ::env(VDD_PIN_VOLTAGE) 0.7
-set ::env(GND_PIN_VOLTAGE) 0
 
 set ::env(SCL_POWER_PINS) "vdd"
 set ::env(SCL_GROUND_PINS) "vss"
@@ -79,8 +81,8 @@ set gt2n_ref $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)
 set gt2n_tech $::env(PDK_ROOT)/$::env(PDK)/libs.tech
 
 # Timing libraries (typical corner only so far)
-set ::env(LIB) [dict create]
-dict set ::env(LIB) "*_tt_0p7v25c" "$gt2n_ref/lib/$::env(STD_CELL_LIBRARY)_tt_0p7v25c.lib"
+set ::env(CELL_LIBS) [dict create]
+dict set ::env(CELL_LIBS) "*_tt_0p7v25c" "$gt2n_ref/lib/$::env(STD_CELL_LIBRARY)_tt_0p7v25c.lib"
 set ::env(STA_CORNERS) "nom_tt_0p7v25c"
 set ::env(DEFAULT_CORNER) "nom_tt_0p7v25c"
 set ::env(TIMING_VIOLATION_CORNERS) "*"
@@ -109,7 +111,9 @@ set ::env(KLAYOUT_TECH) "$gt2n_tech/klayout/tech/gt2n.lyt"
 set ::env(KLAYOUT_PROPERTIES) "$gt2n_tech/klayout/tech/gt2n.lyp"
 set ::env(KLAYOUT_DEF_LAYER_MAP) "$gt2n_tech/klayout/tech/gt2n.map"
 set ::env(KLAYOUT_DRC_RUNSET) "$gt2n_tech/klayout/tech/drc/gt2n.lydrc"
-set ::env(KLAYOUT_DRC_DEFINES) [dict create drc_mode route]
+# Routing-layer rules only; the device/MOL rules are checked per cell
+# (libs.qa/stdcells, full mode).
+set ::env(KLAYOUT_DRC_OPTIONS) [dict create drc_mode route]
 set ::env(KLAYOUT_LVS_SCRIPT) "$gt2n_tech/klayout/tech/lvs/gt2n.lylvs"
 set ::env(KLAYOUT_LVS_OPTIONS) [dict create lvs_mode abstract]
 # The place-and-route boundary is not a mask layer: KLayout writes the die
@@ -148,9 +152,9 @@ set ::env(PDN_CORE_RING_VSPACING) 0.2
 set ::env(PDN_CORE_RING_HSPACING) 0.2
 set ::env(PDN_CORE_RING_VOFFSET) 0.5
 set ::env(PDN_CORE_RING_HOFFSET) 0.5
-set ::env(MACRO_BLOCKAGES_LAYER) "M1 M2 M3 M4 M5 M6 M7 M8 M9"
 
-# Layer parasitics for estimation (Liberty units: ohm and pF per um)
+# Layer parasitics for estimation in ohm and pF per um, via R in ohm (the
+# units gt2n_base.sdc sets before LibreLane applies them)
 set ::env(LAYERS_RC) [dict create]
 {layers_rc}
 set ::env(VIAS_R) [dict create]
@@ -171,7 +175,10 @@ SCL_CONFIG = """\
 set ::env(PLACE_SITE) "gt2_6t"
 
 # Tap cells tie the buried power rails (BPR) to frontside M1 access pins.
+# The same cell is the end cap: every row segment, also the narrow ones beside
+# macros or in cores below FP_TAPCELL_DIST, then gets a tap at each end.
 set ::env(WELLTAP_CELL) "gt2_6t_tapfspdn_{flavor}"
+set ::env(ENDCAP_CELL) "gt2_6t_tapfspdn_{flavor}"
 
 # Synthesis
 set ::env(SYNTH_DRIVING_CELL) "gt2_6t_buf_x4_{flavor}/Y"
@@ -194,15 +201,25 @@ set ::env(DPL_CELL_PADDING) 0
 set ::env(CTS_ROOT_BUFFER) "gt2_6t_buf_x12_{flavor}"
 set ::env(CTS_CLK_BUFFERS) "gt2_6t_buf_x8_{flavor} gt2_6t_buf_x4_{flavor} gt2_6t_buf_x2_{flavor}"
 
-# Default constraints (ns, used by the base SDC)
+# Default constraints of the base SDC: clock uncertainty, clock transition
+# and max transition in ns, time derating and I/O delay in % (of the clock
+# period for the I/O delay), max fanout as a cell count.
 set ::env(MAX_FANOUT_CONSTRAINT) 20
 set ::env(CLOCK_UNCERTAINTY_CONSTRAINT) 0.01
 set ::env(CLOCK_TRANSITION_CONSTRAINT) 0.02
 set ::env(TIME_DERATING_CONSTRAINT) 5
 set ::env(IO_DELAY_CONSTRAINT) 20
+# The NLDM tables are characterised up to 100 ps input slew; the Liberty
+# default_max_transition (1000 ps) is far above that. Stricter than the
+# legacy flow, which sets no max transition.
+set ::env(MAX_TRANSITION_CONSTRAINT) 0.1
 """
 
 PHYSICAL_ONLY = ("filler", "tapfspdn", "tapbspdn", "decapcc")
+# Kept out of synthesis: the upstream mux2_x1 layout violates the legacy rule
+# V0.M1.1 (rV0_9), see libs.qa/stdcells/drc_waivers.txt. LibreLane checks
+# blocks in KLayout route mode, which does not cover that rule.
+SYNTH_ONLY_EXCLUDED = ("mux2_x1",)
 
 
 def files():
@@ -220,7 +237,8 @@ def files():
         flavor = lib[len("gt2_6t_"):]
         out[f"{lib}/config.tcl"] = SCL_CONFIG.format(header=HEADER, lib=lib, flavor=flavor)
         excluded = "".join(f"gt2_6t_{c}_{flavor}\n" for c in PHYSICAL_ONLY)
-        out[f"{lib}/synth_exclude.cells"] = excluded
+        out[f"{lib}/synth_exclude.cells"] = excluded + "".join(
+            f"gt2_6t_{c}_{flavor}\n" for c in SYNTH_ONLY_EXCLUDED)
         out[f"{lib}/pnr_exclude.cells"] = excluded
     return out
 

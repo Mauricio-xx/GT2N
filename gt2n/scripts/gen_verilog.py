@@ -7,8 +7,9 @@ sequential groups and timing arcs) and the CDL netlist (port order):
 
   * combinational cells -> continuous assignments
   * flip-flops          -> a sequential UDP (accurate set/reset release
-                           behaviour) or, for tools without UDP support
-                           (Yosys, Verilator), an equivalent always block
+                           and X behaviour) or, for tools without UDP
+                           support (Yosys, Verilator), an always block with
+                           the same 0/1 behaviour
   * physical-only cells -> empty modules (power ports only)
 
 Power ports are only present when USE_POWER_PINS is defined, following the
@@ -60,24 +61,21 @@ primitive gt2n_udp_dff_sr (Q, D, CLK, RN, SN);
   //  D   CLK   RN  SN  :  Q  :  Q+
       ?    ?     ?   0  :  ?  :  1 ;  // asynchronous set
       ?    ?     0   1  :  ?  :  0 ;  // asynchronous reset
-      0   (01)   1   1  :  ?  :  0 ;
-      1   (01)   1   1  :  ?  :  1 ;
-      0   (01)   1   x  :  ?  :  0 ;
-      1   (01)   x   1  :  ?  :  1 ;
-      0   (x1)   1   1  :  0  :  0 ;
-      1   (x1)   1   1  :  1  :  1 ;
-      0   (0x)   1   1  :  0  :  0 ;
-      1   (0x)   1   1  :  1  :  1 ;
+      0   (01)   ?   1  :  ?  :  0 ;  // capture 0 (or reset)
+      1   (01)   1   ?  :  ?  :  1 ;  // capture 1 (or set)
+      0   (x1)   ?   1  :  0  :  0 ;
+      1   (x1)   1   ?  :  1  :  1 ;
+      0   (0x)   ?   1  :  0  :  0 ;
+      1   (0x)   1   ?  :  1  :  1 ;
       ?   (?0)   ?   ?  :  ?  :  - ;  // falling / steady clock: hold
+      ?   (1x)   ?   ?  :  ?  :  - ;  // 1 -> x is no rising edge
       *    ?     ?   ?  :  ?  :  - ;  // data change without clock edge
       ?    ?    (?1) 1  :  ?  :  - ;  // release of reset
-      ?    ?     1 (?1) :  ?  :  - ;  // release of set
+      ?    ?     1 (?1) :  ?  :  - ;  // release of set (RN = x: Q+ = x)
       ?    0    (?1) ?  :  ?  :  - ;
-      ?    0     ? (?1) :  ?  :  - ;
       ?    1    (?1) ?  :  ?  :  - ;
-      ?    1     ? (?1) :  ?  :  - ;
-      ?    ?     x   1  :  0  :  0 ;  // pessimism reduction
-      ?    ?     1   x  :  1  :  1 ;
+      ?    ?     *   1  :  0  :  0 ;  // RN changes while Q = 0
+      ?    ?     1   *  :  1  :  1 ;  // SN changes while Q = 1
   endtable
 endprimitive
 `endif
@@ -145,11 +143,23 @@ def emit_cell(cell, ports):
             f"  wire {iq};",
             "`ifdef GT2N_NO_UDP",
             f"  reg {iq}_r;",
-            f"  always @(posedge {clk} or negedge {rn_expr} or negedge {sn_expr}) begin"
-            if rn and sn else
-            f"  always @(posedge {clk}" + (f" or negedge {rn}" if rn else "") +
-            (f" or negedge {sn}" if sn else "") + ") begin",
         ]
+        if rn and sn:
+            # Releasing the set while the reset is held must clear the flop.
+            # Simulators get an extra event for it; Yosys accepts only the
+            # plain edge list (it infers a level-sensitive $dffsr from it).
+            body += [
+                "`ifdef YOSYS",
+                f"  always @(posedge {clk} or negedge {rn} or negedge {sn}) begin",
+                "`else",
+                f"  wire {iq}_clr = {sn} & ~{rn};",
+                f"  always @(posedge {clk} or negedge {rn} or negedge {sn}"
+                f" or posedge {iq}_clr) begin",
+                "`endif",
+            ]
+        else:
+            body.append(f"  always @(posedge {clk}" + (f" or negedge {rn}" if rn else "") +
+                        (f" or negedge {sn}" if sn else "") + ") begin")
         # Keep each `if (...)` on its own line: LibreLane's model pre-processor
         # drops lines shaped like `name (...) ...;` (cell instantiations).
         if sn:

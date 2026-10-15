@@ -3,8 +3,10 @@
 # Netgen LVS setup for the GT2N 2 nm nanosheet PDK
 #
 # Devices: nmos_<vt> / pmos_<vt> with vt in elvt ulvt lvt svt hvt sramvt
-# (4 terminals d g s b, properties w l [m]). Physical-only standard cells
-# (filler, tap, decap) carry no devices and are ignored.
+# (4 terminals d g s b, properties w l [m]). The physical-only standard
+# cells, which have supply pins only, are ignored: filler and tap cells
+# carry no devices, the decap (decapcc, a cross-coupled supply-only decap)
+# has one nmos and one pmos.
 #---------------------------------------------------------------
 permute default
 property default

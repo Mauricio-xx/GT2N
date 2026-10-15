@@ -9,12 +9,12 @@ from this directory when run with `--pdk gt2n --pdk-root <repository>
 | --- | --- |
 | `config.tcl` | PDK configuration (Liberty, tech/cell LEF, KLayout, Magic, Netgen, RC, tracks, defaults) |
 | `gt2_6t_<flavour>/config.tcl` | library configuration (site, taps, synthesis/CTS cells, fill, decap) |
-| `gt2_6t_<flavour>/{synth,pnr}_exclude.cells` | physical-only cells kept out of synthesis/resizing |
+| `gt2_6t_<flavour>/{synth,pnr}_exclude.cells` | physical-only cells kept out of synthesis/resizing; synthesis also skips `mux2_x1` (its upstream layout violates V0.M1.1) |
 | `tracks.info` | routing tracks of the frontside router view |
 | `gt2n_pdn_cfg.tcl` | `PDN_CFG`: GT2N PDN + tap-cell hookup (see below) |
-| `gt2n_pdn_fspdn.tcl` | frontside mesh (M2/M3 6 um, M4/M5 8 um, M6..M9 12 um, optional up to RDL); M3..M6 stripes as wide as the via cuts (self-aligned via rules) |
-| `gt2n_tap_to_m3.tcl` | connects every `tapfspdn` M1 pin to the nearest same-net M3 stripe |
-| `gt2n_base.sdc` | default SDC: switches to ns/kOhm, then LibreLane's base SDC |
+| `gt2n_pdn_fspdn.tcl` | frontside mesh (M2/M3 6 um, M4/M5 8 um, M6..M9 12 um, optional up to RDL; `GT2N_PDN_*` pitch knobs); M3..M6 stripes as wide as the via cuts (self-aligned via rules); a macro grid connecting hard-macro supply pins to the adjacent mesh layers (`PDN_MACRO_CONNECTIONS`, `PDN_*_HALO`) |
+| `gt2n_tap_to_m3.tcl` | checks that every BPR rail segment has a `tapfspdn` cell, then connects every tap M1 pin to the same-net M3 stripe on its left (VDD) or right (VSS), else the nearest other one, avoiding PDN obstructions and macro halos |
+| `gt2n_base.sdc` | default SDC: switches the command units to ns/ohm (the `LAYERS_RC`/`VIAS_R` units), then LibreLane's base SDC |
 | `openrcx/gt2n_rcx_patterns.rules` | OpenRCX extraction rules |
 
 ## Design configuration
@@ -26,11 +26,8 @@ GT2N needs a few design-level settings that a PDK configuration cannot set
 meta:
   version: 3
   flow: Classic
-  substituting_steps:          # no Magic device extraction for GT2N
-    Magic.SpiceExtraction: null
-    Checker.IllegalOverlap: null
-    Netgen.LVS: null
-    Checker.LVS: null
+  substituting_steps:          # PSM sees only the tap cells, see below
+    OpenROAD.IRDropReport: null
 PDN_CFG: pdk_dir::libs.tech/librelane/gt2n_pdn_cfg.tcl
 PNR_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
 SIGNOFF_SDC_FILE: pdk_dir::libs.tech/librelane/gt2n_base.sdc
@@ -40,28 +37,61 @@ GND_NETS: [VSS]
 # wires are non-rectangular, so keep the pins one track wide.
 IO_PIN_V_THICKNESS_MULT: 1
 IO_PIN_H_THICKNESS_MULT: 1
-# Cell supply pins sit on BPR (MASTERSLICE in the router view): OpenROAD PSM
-# cannot trace them and flags every cell. LVS checks those connections.
-ERROR_ON_PDN_VIOLATIONS: false
 ```
 
+LibreLane's Magic/Netgen LVS path (`Magic.SpiceExtraction` from the routed
+DEF and the cell LEF abstracts, `Netgen.LVS` at cell level) runs with the
+GT2N Magic technology. Transistor-level LVS uses the KLayout deck; LibreLane
+runs `KLayout.LVS` only for the IHP PDKs, so the example calls it with
+`make lvs`.
+
 Choose the library with `--scl gt2_6t_<w13|w31>_<elvt|ulvt|lvt|svt|hvt>`
-(default `gt2_6t_w31_svt`). Keep the core a few multiples of the 6 um M2/M3
-stripe pitch wide.
+(default `gt2_6t_w31_svt`). With the default pitches the core must be at
+least about 12.1 um wide and high (else pdngen stops with PDN-0185); export
+`GT2N_PDN_MID_PITCH`/`GT2N_PDN_MID_OFFSET` (M4/M5) and
+`GT2N_PDN_HIGH_PITCH`/`GT2N_PDN_HIGH_OFFSET` (M6..M9) before running
+LibreLane for smaller blocks. The PDK sets `ENDCAP_CELL` to the tapfspdn
+cell, so every row segment (also below `FP_TAPCELL_DIST` = 28 um, or cut by
+macros) has a tap at both ends.
 
 ## Why the custom PDN
 
 The standard-cell supply rails are buried power rails (BPR). In the
 frontside router view (`gt2_fspdn_tech.lef`) BPR is a MASTERSLICE layer, so
 neither the router nor pdngen followpins can use it. Every `tapfspdn` cell
-ties the BPR rails to two M1 pins; after pdngen, `gt2n_tap_to_m3.tcl` adds an
-M2 jog with V1/V2 from each pin to the nearest same-net M3 stripe, extends
-that stripe along its track where pdngen trimmed it short of the jog (rows
-at the top and bottom of the core), and checks the grid with
-`check_power_grid`. VDD jogs run left and VSS jogs right; where both must
-run the same way (taps near the core edge) they take different M2 tracks,
-and the script stops rather than draw overlapping jogs of different nets
-(DRC cannot see such a short; LVS does).
+ties the BPR rails to two M1 pins. After pdngen, `gt2n_tap_to_m3.tcl`:
+
+- checks that every BPR rail segment (a row boundary, over the rows sharing
+  it) touches a tap cell, and stops the flow otherwise. Neither OpenROAD PSM
+  nor any other LibreLane check sees BPR, so a rail without a tap would
+  float unnoticed;
+- adds an M2 jog with V1/V2 from each tap pin to the same-net M3 stripe on
+  its preferred side (VDD left, VSS right), else the nearest other one, and
+  extends that stripe along its track where pdngen trimmed it short of the
+  jog (rows at the top and bottom of the core, stripes split around
+  obstructions or macros). Jogs keep the M2.3/M2.4/M2.5 spacing to the
+  supply M2 of the other net, so jogs of different nets never overlap (DRC
+  cannot see such a short, LVS does), and jogs, vias and extensions stay out
+  of `PDN_OBSTRUCTIONS` and of placed macros plus the PDN halo. When a pin
+  cannot be connected the script stops with its location;
+- checks the grid with `check_power_grid` and deletes the PSM markers of its
+  pre-repair check, so LibreLane's PDN violation metric reflects the real
+  grid (0 for a correct GT2N PDN) and `ERROR_ON_PDN_VIOLATIONS` can stay on.
+
+`OpenROAD.IRDropReport` only sees the tap instances (the cell supply pins are
+on BPR), so its 0 V / 0 W result is not meaningful; the example substitutes
+it out.
+
+Hard macros: their supply pins must be crossed by a parent mesh layer above
+or below the pin layer. A GT2N macro with M9 pins (the default top layer)
+needs `GT2N_PDN_TOP_LAYER=M11` or higher in the parent. M4/M5 macro supply
+pins are not supported: pdngen inserts no via to minimum-width pins
+(PDN-0110, the flow then stops with `still disconnected (... inst:<macro>)`),
+and on wider pins it generates vias that break the self-aligned via rules,
+which only the signoff DRC reports. Keep `PDN_HORIZONTAL_HALO` /
+`PDN_VERTICAL_HALO` no larger than `FP_MACRO_HORIZONTAL_HALO` /
+`FP_MACRO_VERTICAL_HALO`, otherwise the end-cap taps beside a macro fall
+inside the PDN keepout and the script stops.
 
 ## Other PDK-level choices
 

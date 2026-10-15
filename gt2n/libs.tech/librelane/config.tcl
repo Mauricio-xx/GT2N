@@ -4,17 +4,17 @@
 # LibreLane PDK configuration for GT2N (2 nm nanosheet, BSPDN).
 #
 # Select a standard-cell library (one per nanosheet width / VT flavour) with
-# STD_CELL_LIBRARY, e.g. gt2_6t_w31_svt (default). GT2N has no Magic device
-# extraction: designs must disable the Magic/Netgen steps, see
+# STD_CELL_LIBRARY, e.g. gt2_6t_w31_svt (default). See
 # libs.tech/librelane/README.md for the required design configuration.
-
-set ::env(PROCESS) 2
-set ::env(DEF_UNITS_PER_MICRON) 2000
+#
+# LibreLane's Magic.SpiceExtraction extracts the routed DEF against the LEF
+# abstracts of the cells, so the Magic/Netgen LVS path needs the via
+# connectivity of the Magic tech file (libs.tech/magic/gt2n.tech), not device
+# extraction. Transistor-level LVS uses the KLayout deck
+# (libs.tech/klayout/tech/lvs/gt2n.lylvs).
 
 set ::env(VDD_PIN) "VDD"
 set ::env(GND_PIN) "VSS"
-set ::env(VDD_PIN_VOLTAGE) 0.7
-set ::env(GND_PIN_VOLTAGE) 0
 
 set ::env(SCL_POWER_PINS) "vdd"
 set ::env(SCL_GROUND_PINS) "vss"
@@ -27,8 +27,8 @@ set gt2n_ref $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)
 set gt2n_tech $::env(PDK_ROOT)/$::env(PDK)/libs.tech
 
 # Timing libraries (typical corner only so far)
-set ::env(LIB) [dict create]
-dict set ::env(LIB) "*_tt_0p7v25c" "$gt2n_ref/lib/$::env(STD_CELL_LIBRARY)_tt_0p7v25c.lib"
+set ::env(CELL_LIBS) [dict create]
+dict set ::env(CELL_LIBS) "*_tt_0p7v25c" "$gt2n_ref/lib/$::env(STD_CELL_LIBRARY)_tt_0p7v25c.lib"
 set ::env(STA_CORNERS) "nom_tt_0p7v25c"
 set ::env(DEFAULT_CORNER) "nom_tt_0p7v25c"
 set ::env(TIMING_VIOLATION_CORNERS) "*"
@@ -57,7 +57,9 @@ set ::env(KLAYOUT_TECH) "$gt2n_tech/klayout/tech/gt2n.lyt"
 set ::env(KLAYOUT_PROPERTIES) "$gt2n_tech/klayout/tech/gt2n.lyp"
 set ::env(KLAYOUT_DEF_LAYER_MAP) "$gt2n_tech/klayout/tech/gt2n.map"
 set ::env(KLAYOUT_DRC_RUNSET) "$gt2n_tech/klayout/tech/drc/gt2n.lydrc"
-set ::env(KLAYOUT_DRC_DEFINES) [dict create drc_mode route]
+# Routing-layer rules only; the device/MOL rules are checked per cell
+# (libs.qa/stdcells, full mode).
+set ::env(KLAYOUT_DRC_OPTIONS) [dict create drc_mode route]
 set ::env(KLAYOUT_LVS_SCRIPT) "$gt2n_tech/klayout/tech/lvs/gt2n.lylvs"
 set ::env(KLAYOUT_LVS_OPTIONS) [dict create lvs_mode abstract]
 # The place-and-route boundary is not a mask layer: KLayout writes the die
@@ -96,9 +98,9 @@ set ::env(PDN_CORE_RING_VSPACING) 0.2
 set ::env(PDN_CORE_RING_HSPACING) 0.2
 set ::env(PDN_CORE_RING_VOFFSET) 0.5
 set ::env(PDN_CORE_RING_HOFFSET) 0.5
-set ::env(MACRO_BLOCKAGES_LAYER) "M1 M2 M3 M4 M5 M6 M7 M8 M9"
 
-# Layer parasitics for estimation (Liberty units: ohm and pF per um)
+# Layer parasitics for estimation in ohm and pF per um, via R in ohm (the
+# units gt2n_base.sdc sets before LibreLane applies them)
 set ::env(LAYERS_RC) [dict create]
 dict set ::env(LAYERS_RC) "*" M1 res 4.375000e+02
 dict set ::env(LAYERS_RC) "*" M1 cap 9.031270e-05

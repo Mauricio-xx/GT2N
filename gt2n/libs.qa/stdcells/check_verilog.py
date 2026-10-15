@@ -7,8 +7,10 @@ each Verilog model is proven equivalent with a SAT miter (temporal induction
 for flip-flops, after async2sync). Yosys resolves a simultaneous clear and
 preset differently from the Liberty clear_preset_var1 attribute, so for
 flip-flops with both asynchronous inputs the proof is split in two runs (set
-held inactive, then reset held inactive); the conflict case is covered by
-the Icarus simulation in tb_dffasync.v.
+held inactive, then reset held inactive). The proof covers the always block
+that Yosys reads; the conflict case, the event-driven always block used by
+simulators and the X behaviour of the UDP are covered by the simulation of
+tb_dffasync.v (make test-dff).
 
 Usage: check_verilog.py [lib ...]   (requires yosys in PATH)
 """
@@ -23,6 +25,16 @@ sys.path.insert(0, str(HERE.parents[1] / "scripts"))
 
 import liberty  # noqa: E402
 from gt2n_common import LIBS_REF, all_libs  # noqa: E402
+
+
+def async_pin(cell, expr):
+    """Pin of an active-low Liberty clear/preset such as '(!RESETN)'."""
+    if not expr:
+        return None
+    name = expr.replace("(", "").replace(")", "").replace("!", "").strip()
+    if name not in {p.name for p in cell.children("pin")}:
+        raise ValueError(f"{cell.name}: unsupported clear/preset {expr!r}")
+    return name
 
 
 def script_for(lib):
@@ -56,15 +68,14 @@ def script_for(lib):
         else:
             lines.append("async2sync")
             ff = ffs[0]
-            clear = ff.get("clear")
-            preset = ff.get("preset")
-            pins = {p.name for p in cell.children("pin")}
-            rn = next((p for p in pins if clear and p in clear), None)
-            sn = next((p for p in pins if preset and p in preset), None)
+            rn = async_pin(cell, ff.get("clear"))
+            sn = async_pin(cell, ff.get("preset"))
             base = "sat -tempinduct -prove-asserts -set-init-zero -seq 1 -maxsteps 12 -verify"
             if rn and sn:
-                lines.append(f"{base} -set in_{sn} 1 miter")
-                lines.append(f"{base} -set in_{rn} 1 miter")
+                if rn == sn:
+                    raise ValueError(f"{name}: clear and preset on the same pin {rn}")
+                lines.append(f"{base} -set in_{sn} 1 miter")   # reset path
+                lines.append(f"{base} -set in_{rn} 1 miter")   # set path
             else:
                 lines.append(f"{base} miter")
         checked.append(name)

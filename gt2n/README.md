@@ -38,14 +38,14 @@ gt2n/
 
 | Tool | Collateral | Status |
 | --- | --- | --- |
-| Yosys | Liberty, Verilog models | Verilog models formally equivalent to Liberty (all 680 logic cells) |
-| Icarus / Verilator / cocotb | `libs.ref/*/verilog` | flip-flop testbench, RTL/GL simulation of the example macro |
-| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; example macro runs RTL to GDS with 0 DRC (KLayout, Magic), 0 XOR, 0 antenna, timing met, transistor-level LVS clean |
+| Yosys | Liberty, Verilog models | Verilog models formally equivalent to Liberty (all 680 logic cells; flip-flop set and reset paths proven separately) |
+| Icarus / Verilator / cocotb | `libs.ref/*/verilog` | flip-flop testbench (UDP and `GT2N_NO_UDP` models, X checks), RTL/GL simulation of the example macro |
+| LibreLane (Classic) | `libs.tech/librelane` | configuration loads for all 10 libraries; example macro runs RTL to GDS with 0 routing-layer DRC (KLayout, Magic), 0 XOR, 0 PDN violations, timing met, Netgen cell-level LVS and KLayout transistor-level LVS clean |
 | OpenROAD | via LibreLane (PDN, tap hookup, tracks, RC) | see LibreLane |
-| KLayout | `libs.tech/klayout/tech` | DRC clean on all libraries (2 documented upstream waivers); transistor-level LVS matches all 720 cells and the placed-and-routed example macro |
-| Magic | `libs.tech/magic` | GDS round trip exact for all libraries; no device extraction |
-| Netgen | `libs.tech/netgen` | nanosheet MOS permutation/property rules |
-| ngspice / Xyce | `libs.ref/*/spice` | netlists only; BSIM-CMG model cards not ported yet |
+| KLayout | `libs.tech/klayout/tech` | DRC clean on all libraries, also in a placed block of mirrored rows (2 documented upstream waivers); rule fixtures (`libs.qa/drc`) check that the rules fire. Transistor-level LVS: 690 cells match at device level and the 30 device-less cells (filler, tap cells) pass a supply check; the placed-and-routed example macro matches; positive and negative LVS cases in `libs.qa/lvs` |
+| Magic | `libs.tech/magic` | GDS round trip exact (shapes, texts, cells) for all libraries; abutting-cut connectivity, GATE cut by GCUT/DUMMY, LEF OBS for macro abstracts; no device extraction |
+| Netgen | `libs.tech/netgen` | nanosheet MOS permutation/property rules; cell-level LVS of the example macro (LibreLane `Netgen.LVS`) matches |
+| ngspice / Xyce | `libs.ref/*/spice` | netlists only; the `nmos_<vt>`/`pmos_<vt>` wrappers around the legacy BSIM-CMG cards in `device/tt/` are not provided yet |
 | OpenROAD-flow-scripts | `libs.tech/openroad` | experimental, not validated |
 
 ## Using the PDK
@@ -66,7 +66,8 @@ gt2n/
   front+backside stack.
 - **Units.** Liberty files use ps / ohm / pF. LibreLane designs should use
   `libs.tech/librelane/gt2n_base.sdc`, which switches the SDC command units to
-  ns / kOhm. The `libs.ref` GDS use a 0.1 nm database unit; the legacy files
+  ns / ohm (ohm is also the unit of the PDK `LAYERS_RC`/`VIAS_R`; a custom SDC
+  must start with the same `set_cmd_units` line). The `libs.ref` GDS use a 0.1 nm database unit; the legacy files
   use 0.5 nm, which LibreLane's Magic stream-out rejects. The geometry is
   identical (`scripts/sync_libs_ref.py` rescales the coordinates).
 - **Flavours.** One library per nanosheet width (13 nm, 31 nm) and threshold
@@ -82,17 +83,26 @@ gt2n/
 
 - Magic: the backside layers (GDS 910-1000) are not representable (Magic only
   supports GDS layer numbers up to 255), and there is no nanosheet device
-  extraction, so LibreLane's Magic/Netgen LVS path is disabled.
+  extraction (LibreLane's Magic/Netgen LVS compares at cell level from LEF
+  abstracts; transistor-level LVS uses the KLayout deck).
 - LibreLane's `KLayout.LVS` step is currently enabled only for the IHP PDKs;
   the GT2N deck is compatible with its interface (`input`, `schematic`,
   `report`, `target_netlist`, same pass/fail messages). The example runs it
   with `make lvs`.
 - KLayout DRC waivers (`libs.qa/stdcells/drc_waivers.txt`): `mux2_x1` V0.M1.1
   and the 13 nm `decapcc` VG.ACT.1 are findings in the upstream cell layouts.
+  LibreLane keeps both cells out of synthesis. LibreLane runs the DRC deck in
+  route mode (routing layers); the device/MOL rules are checked per cell and
+  on a placed block of all cells (`make test-drc`).
 - LibreLane inserts decap cells after routing; the GT2N decaps carry M1
   shapes, so the PDK configuration uses only the M1-free filler there.
-- OpenROAD PSM cannot trace the BPR supply pins, so LibreLane designs must
-  set `ERROR_ON_PDN_VIOLATIONS: false` (see `libs.tech/librelane/README.md`).
+- OpenROAD PSM cannot see BPR. The tap-to-rail coverage is checked by
+  `gt2n_tap_to_m3.tcl` (every BPR rail segment must touch a tapfspdn cell)
+  and by KLayout LVS, not by PSM; LibreLane's PDN violation metric covers the
+  frontside grid and is 0 for a correct GT2N PDN. The IR-drop report is not
+  meaningful (it only sees the tap cells).
+- No antenna rules: neither the GT2N tech LEF nor the ICV runset defines
+  any, so OpenROAD's antenna checks cannot report anything.
 - No I/O pad, SRAM or SPICE model support yet.
 
 ## Regenerating and testing
@@ -100,12 +110,13 @@ gt2n/
 ```
 make generate          # refresh libs.ref and the generated libs.tech files
 make check-generated   # verify that the committed files are up to date
-make test-fast         # views, Verilog equivalence, flip-flop testbench
-make test              # + KLayout DRC/LVS, Magic round trip, LibreLane config
+make test-fast         # views, Verilog equivalence, flip-flop testbench, DRC rule fixtures
+make test              # + KLayout DRC/LVS (cells and LVS cases), Magic, LibreLane config and RC units
 ```
 
-The regressions need `yosys`, `iverilog`, `klayout`, `magic` and the
-`librelane` Python package in `PATH`.
+The regressions need `yosys`, `iverilog`, `klayout`, `magic`, `openroad` and
+the `librelane` Python package in `PATH` (the Nix shell of the example
+provides all of them).
 
 ## License
 
