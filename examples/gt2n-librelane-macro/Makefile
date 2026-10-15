@@ -1,13 +1,17 @@
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from IHP-GmbH/ihp-sg13-librelane-template (Apache-2.0).
 #
 # GT2N LibreLane macro example. Run `make help` for the targets. LibreLane and
 # its tools come from the Nix shell of this directory (`nix-shell`).
 
 MAKEFILE_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
-# The GT2N PDK lives in <repository>/gt2n
-PDK_ROOT ?= $(realpath $(MAKEFILE_DIR)/../..)
-PDK ?= gt2n
+# The GT2N PDK lives in <repository>/gt2n. A PDK_ROOT or PDK exported for
+# another PDK (ciel, IHP, ...) must not leak in, so the defaults use their own
+# names; `make GT2N_PDK_ROOT=<dir>` points at another GT2N checkout.
+GT2N_PDK_ROOT ?= $(realpath $(MAKEFILE_DIR)/../..)
+override PDK_ROOT := $(GT2N_PDK_ROOT)
+override PDK := gt2n
 SCL ?= gt2_6t_w31_svt
 
 DESIGN = gt2n_demo

@@ -1,4 +1,6 @@
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-FileCopyrightText: 2025 LibreLane Template Contributors
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from IHP-GmbH/ihp-sg13-librelane-template (Apache-2.0).
 #
 # cocotb testbench of the GT2N LibreLane macro example.
 #
@@ -9,14 +11,17 @@
 #
 # Environment: PDK_ROOT (directory containing gt2n/), PDK (gt2n),
 # SCL (standard-cell library, default gt2_6t_w31_svt), SIM (icarus).
+# The exit status is non-zero when a test fails or none ran.
 
 import os
 import random
+import sys
 from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
+from cocotb_tools.check_results import get_results
 from cocotb_tools.runner import get_runner
 
 PROJ = Path(__file__).resolve().parent.parent
@@ -94,13 +99,16 @@ def gt2n_demo_runner():
         timescale=("1ns", "1ps"),
         build_dir=PROJ / "cocotb" / "sim_build",
     )
-    runner.test(
+    results = runner.test(
         hdl_toplevel=hdl_toplevel,
         test_module="gt2n_demo_tb",
         test_dir=PROJ / "cocotb",
         waves=True,
     )
+    # Runner.test() only returns the results file outside pytest.
+    num_tests, num_failed = get_results(results)
+    return num_tests > 0 and num_failed == 0
 
 
 if __name__ == "__main__":
-    gt2n_demo_runner()
+    sys.exit(0 if gt2n_demo_runner() else 1)
